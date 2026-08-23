@@ -39,7 +39,7 @@
       </div>
     {% elif role_hint in ("lecturer", "student") %}
       <div class="login-hint" style="margin-top:14px;">
-        Forgot your password? Contact your administrator to have it reset.
+        Forgot your password? <a href="{{ url_for('request_password_reset', role=role_hint) }}">Request a reset</a>
       </div>
     {% endif %}
 

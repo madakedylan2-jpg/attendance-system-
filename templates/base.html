@@ -29,6 +29,7 @@
         <span class="section-label">System</span>
         <a href="{{ url_for('reports') }}" class="{{ 'active' if request.endpoint in ['reports','reports_generate'] }}">Reports</a>
         <a href="{{ url_for('users_list') }}" class="{{ 'active' if request.endpoint=='users_list' }}">User Accounts</a>
+        <a href="{{ url_for('password_reset_requests_view') }}" class="{{ 'active' if request.endpoint in ['password_reset_requests_view'] }}">Reset Requests{% if pending_reset_count %} <span class="badge late">{{ pending_reset_count }}</span>{% endif %}</a>
         <a href="{{ url_for('audit_log_view') }}" class="{{ 'active' if request.endpoint=='audit_log_view' }}">Audit Trail</a>
         <a href="{{ url_for('settings_page') }}" class="{{ 'active' if request.endpoint=='settings_page' }}">Settings</a>
         <a href="{{ url_for('backup_page') }}" class="{{ 'active' if request.endpoint in ['backup_page','backup_download'] }}">Backup</a>
