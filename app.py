@@ -104,6 +104,18 @@ def inject_user():
     }
 
 
+@app.context_processor
+def inject_pending_reset_count():
+    if session.get("role") != "admin":
+        return {}
+    db = get_db()
+    count = db.execute(
+        "SELECT COUNT(*) AS c FROM password_reset_requests WHERE status='pending'"
+    ).fetchone()["c"]
+    db.close()
+    return {"pending_reset_count": count}
+
+
 # ----------------------------------------------------------------------
 # Auth routes
 # ----------------------------------------------------------------------
@@ -196,6 +208,61 @@ def admin_recovery():
         flash(f"Password for '{username}' has been reset. You can now log in.", "success")
         return redirect(url_for("login"))
     return render_template("admin_recovery.html")
+
+
+@app.route("/request-password-reset", methods=["GET", "POST"])
+def request_password_reset():
+    """
+    Real, clickable password-reset request for students and lecturers
+    (admin has their own self-service recovery page instead). Submitting
+    this form doesn't reset anything by itself — it logs a request that
+    shows up for admin on the Password Reset Requests screen, where they
+    can act on it with the Reset Password button already built for
+    Users/Students. No email server needed, still fully admin-mediated.
+    """
+    role_hint = request.args.get("role", "").strip()
+    if role_hint not in ("student", "lecturer"):
+        role_hint = request.form.get("role_hint", "").strip()
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        message = request.form.get("message", "").strip()
+        role_hint = request.form.get("role_hint", role_hint).strip()
+        if role_hint not in ("student", "lecturer"):
+            flash("Please choose whether you're a student or a lecturer.", "error")
+            return render_template("request_password_reset.html", role_hint=role_hint)
+        if not username:
+            flash("Please enter your username / registration number.", "error")
+            return render_template("request_password_reset.html", role_hint=role_hint)
+
+        db = get_db()
+        requester_id = None
+        full_name = None
+        if role_hint == "student":
+            row = db.execute(
+                "SELECT id, full_name FROM students WHERE reg_number = ?", (username,)
+            ).fetchone()
+        else:
+            row = db.execute(
+                "SELECT id, full_name FROM users WHERE username = ? AND role = 'lecturer'", (username,)
+            ).fetchone()
+        if row:
+            requester_id = row["id"]
+            full_name = row["full_name"]
+        db.execute(
+            """INSERT INTO password_reset_requests
+               (requester_type, requester_id, username, full_name, message)
+               VALUES (?, ?, ?, ?, ?)""",
+            (role_hint, requester_id, username, full_name, message or None),
+        )
+        db.commit()
+        db.close()
+        flash(
+            "Your request has been sent to the administrator. You'll be able to "
+            "log in once your password is reset — check back or wait to be contacted.",
+            "success",
+        )
+        return redirect(url_for("login", role=role_hint))
+    return render_template("request_password_reset.html", role_hint=role_hint)
 
 
 @app.route("/logout")
@@ -1261,6 +1328,39 @@ def user_detail(user_id):
 # ----------------------------------------------------------------------
 # Audit trail viewer (admin)
 # ----------------------------------------------------------------------
+@app.route("/password-reset-requests")
+@role_required("admin")
+def password_reset_requests_view():
+    db = get_db()
+    pending = db.execute(
+        "SELECT * FROM password_reset_requests WHERE status='pending' ORDER BY created_at ASC"
+    ).fetchall()
+    resolved = db.execute(
+        "SELECT * FROM password_reset_requests WHERE status='resolved' ORDER BY resolved_at DESC LIMIT 50"
+    ).fetchall()
+    db.close()
+    return render_template("password_reset_requests.html", pending=pending, resolved=resolved)
+
+
+@app.route("/password-reset-requests/<int:request_id>/resolve", methods=["POST"])
+@role_required("admin")
+def password_reset_request_resolve(request_id):
+    db = get_db()
+    req = db.execute("SELECT * FROM password_reset_requests WHERE id=?", (request_id,)).fetchone()
+    if not req:
+        db.close()
+        abort(404)
+    db.execute(
+        "UPDATE password_reset_requests SET status='resolved', resolved_at=datetime('now'), resolved_by=? WHERE id=?",
+        (session.get("full_name"), request_id),
+    )
+    db.commit()
+    db.close()
+    log_action("password_reset_request_resolved", f"{req['requester_type']}={req['username']}")
+    flash("Marked as resolved.", "success")
+    return redirect(url_for("password_reset_requests_view"))
+
+
 @app.route("/audit")
 @role_required("admin")
 def audit_log_view():

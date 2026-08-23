@@ -32,6 +32,7 @@ def init_db(reset=False):
             conn.executescript(f.read())
         conn.commit()
     ensure_messaging_tables(conn)
+    ensure_reset_requests_table(conn)
     conn.close()
     return first_time or reset
 
@@ -66,6 +67,36 @@ def ensure_messaging_tables(conn):
 
         CREATE INDEX IF NOT EXISTS idx_msg_recipient
             ON message_recipients (recipient_type, recipient_id, read_at);
+        """
+    )
+    conn.commit()
+
+
+def ensure_reset_requests_table(conn):
+    """
+    Adds the password_reset_requests table if it doesn't exist yet — same
+    safe, additive pattern as ensure_messaging_tables. Lets a student or
+    lecturer who forgot their password submit a real request (instead of
+    just being told "contact your administrator" with nothing to click),
+    which then shows up for admin to act on.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS password_reset_requests (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            requester_type TEXT NOT NULL CHECK (requester_type IN ('student','lecturer')),
+            requester_id   INTEGER,
+            username       TEXT NOT NULL,
+            full_name      TEXT,
+            message        TEXT,
+            status         TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','resolved')),
+            created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+            resolved_at    TEXT,
+            resolved_by    TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_reset_requests_status
+            ON password_reset_requests (status, created_at);
         """
     )
     conn.commit()
