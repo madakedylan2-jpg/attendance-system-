@@ -9,6 +9,10 @@
       {{ 'Deactivate' if student.status == 'active' else 'Reactivate' }}
     </button>
   </form>
+  <form method="post" action="{{ url_for('student_reset_password', student_id=student.id) }}"
+        onsubmit="return confirm('Reset this student\'s password back to their registration number?');">
+    <button class="btn" type="submit">Reset Password</button>
+  </form>
 </div>
 <div class="barcode-rule"></div>
 

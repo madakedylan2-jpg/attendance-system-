@@ -5,6 +5,10 @@
 <div class="topline">
   <h1>{{ staff.full_name }}</h1>
   <span class="badge {{ staff.role }}">{{ staff.role }}</span>
+  <form method="post" action="{{ url_for('user_reset_password', user_id=staff.id) }}"
+        onsubmit="return confirm('Reset this user\'s password? A temporary password will be generated.');">
+    <button class="btn" type="submit">Reset Password</button>
+  </form>
 </div>
 <div class="barcode-rule"></div>
 
