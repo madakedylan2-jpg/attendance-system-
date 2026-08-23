@@ -604,6 +604,32 @@ def student_toggle_status(student_id):
     return redirect(url_for("student_detail", student_id=student_id))
 
 
+@app.route("/students/<int:student_id>/reset_password", methods=["POST"])
+@role_required("admin")
+def student_reset_password(student_id):
+    """Reset a student's password back to their registration number — the
+    same default used when their account was first created."""
+    db = get_db()
+    student = db.execute("SELECT reg_number, full_name FROM students WHERE id=?", (student_id,)).fetchone()
+    if not student:
+        db.close()
+        abort(404)
+    db.execute(
+        "UPDATE students SET password_hash=? WHERE id=?",
+        (generate_password_hash(student["reg_number"]), student_id),
+    )
+    db.commit()
+    db.close()
+    log_action("password_reset", f"admin reset password for student={student['reg_number']}")
+    flash(
+        f"{student['full_name']}'s password has been reset to their registration "
+        f"number ({student['reg_number']}). They should change it from Profile "
+        f"after logging in.",
+        "success",
+    )
+    return redirect(url_for("student_detail", student_id=student_id))
+
+
 # ----------------------------------------------------------------------
 # Student self-service dashboard (own attendance history, per-course %,
 # low-attendance flag). Students log in with reg_number as username.
@@ -1072,6 +1098,35 @@ def user_toggle(user_id):
     db.commit()
     db.close()
     return redirect(url_for("users_list"))
+
+
+@app.route("/users/<int:user_id>/reset_password", methods=["POST"])
+@role_required("admin")
+def user_reset_password(user_id):
+    """Admin-mediated password reset (no email server required). Generates
+    a random temporary password, shown once, that the user must use to log
+    in — they can then change it themselves from Profile."""
+    import secrets
+    db = get_db()
+    target = db.execute("SELECT username, full_name FROM users WHERE id=?", (user_id,)).fetchone()
+    if not target:
+        db.close()
+        abort(404)
+    temp_password = secrets.token_urlsafe(6)
+    db.execute(
+        "UPDATE users SET password_hash=? WHERE id=?",
+        (generate_password_hash(temp_password), user_id),
+    )
+    db.commit()
+    db.close()
+    log_action("password_reset", f"admin reset password for user={target['username']}")
+    flash(
+        f"Temporary password for {target['full_name']} ({target['username']}): "
+        f"{temp_password} — share this with them securely. They should change it "
+        f"from Profile after logging in.",
+        "success",
+    )
+    return redirect(url_for("user_detail", user_id=user_id))
 
 
 @app.route("/lecturers")
