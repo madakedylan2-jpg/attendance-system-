@@ -8,6 +8,15 @@
 </div>
 <div class="barcode-rule"></div>
 
+{% if pending_reset_count %}
+  <div class="flash error" style="margin-bottom:18px; display:flex; align-items:center; justify-content:space-between;">
+    <span>
+      ⚠ You have <strong>{{ pending_reset_count }}</strong> pending password reset request{{ 'es' if pending_reset_count != 1 }}.
+    </span>
+    <a href="{{ url_for('password_reset_requests_view') }}" class="btn accent">Review now</a>
+  </div>
+{% endif %}
+
 <div class="grid cols-4">
   <div class="card stat">
     <div class="num">{{ total_students }}</div>
