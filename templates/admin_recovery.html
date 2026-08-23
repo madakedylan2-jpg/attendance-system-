@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Admin Recovery{% endblock %}
+{% block content_bare %}
+<div class="login-shell">
+  <div class="login-card">
+    <div class="brand">Admin Password Recovery</div>
+    <div class="barcode-rule" style="height:6px;"></div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="flash {{ category }}">
+            <span>{{ message }}</span>
+            <button type="button" class="dismiss" onclick="this.parentElement.remove()" aria-label="Dismiss">×</button>
+          </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <p style="font-size:13px; color:var(--muted, #666); margin:4px 0 16px;">
+      Only use this if the admin account itself is locked out and there is
+      no other admin who can reset it for you. Requires the recovery key
+      set on the server — not your admin password.
+    </p>
+
+    <form method="post">
+      <label for="username">Admin username</label>
+      <input type="text" id="username" name="username" value="admin" required>
+      <label for="recovery_key">Recovery key</label>
+      <input type="password" id="recovery_key" name="recovery_key" required>
+      <label for="new_password">New password</label>
+      <input type="password" id="new_password" name="new_password" required minlength="6">
+      <button class="btn accent" type="submit" style="width:100%; justify-content:center; margin-top:18px;">Reset admin password</button>
+    </form>
+
+    <div class="login-hint" style="margin-top:14px;">
+      <a href="{{ url_for('login') }}">Back to sign in</a>
+    </div>
+  </div>
+</div>
+{% endblock %}
