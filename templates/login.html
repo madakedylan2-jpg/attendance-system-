@@ -4,6 +4,13 @@
 <div class="login-shell">
   <div class="login-card">
     <div class="brand">TELONE CENTRE FOR LEARNING TRACKING SYSTEM</div>
+    {% if role_hint == "admin" %}
+      <p style="margin:6px 0 0; font-weight:600;">Admin sign in</p>
+    {% elif role_hint == "lecturer" %}
+      <p style="margin:6px 0 0; font-weight:600;">Lecturer sign in</p>
+    {% elif role_hint == "student" %}
+      <p style="margin:6px 0 0; font-weight:600;">Student sign in</p>
+    {% endif %}
     <div class="barcode-rule" style="height:6px;"></div>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
@@ -18,12 +25,27 @@
     {% endwith %}
 
     <form method="post">
-      <label for="username">Username</label>
+      <input type="hidden" name="role_hint" value="{{ role_hint }}">
+      <label for="username">{{ 'Registration number' if role_hint == 'student' else 'Username' }}</label>
       <input type="text" id="username" name="username" required autofocus>
       <label for="password">Password</label>
       <input type="password" id="password" name="password" required>
       <button class="btn accent" type="submit" style="width:100%; justify-content:center; margin-top:18px;">Sign in</button>
     </form>
+
+    {% if role_hint == "admin" %}
+      <div class="login-hint" style="margin-top:14px;">
+        Forgot your password? <a href="{{ url_for('admin_recovery') }}">Use admin recovery</a>
+      </div>
+    {% elif role_hint in ("lecturer", "student") %}
+      <div class="login-hint" style="margin-top:14px;">
+        Forgot your password? Contact your administrator to have it reset.
+      </div>
+    {% endif %}
+
+    <div class="login-hint" style="margin-top:6px;">
+      <a href="{{ url_for('select_role') }}">← Back</a>
+    </div>
   </div>
 </div>
 {% endblock %}

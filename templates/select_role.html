@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Sign in{% endblock %}
+{% block content_bare %}
+<div class="login-shell">
+  <div class="login-card" style="max-width:480px;">
+    <div class="brand">TELONE CENTRE FOR LEARNING TRACKING SYSTEM</div>
+    <div class="barcode-rule" style="height:6px;"></div>
+    <p style="margin:16px 0 4px; color:var(--muted, #666); font-size:14px;">
+      Choose how you're signing in.
+    </p>
+
+    <div style="display:flex; flex-direction:column; gap:12px; margin-top:14px;">
+      <a href="{{ url_for('login', role='admin') }}" class="btn accent"
+         style="width:100%; justify-content:center; padding:14px; font-size:16px;">
+        Admin
+      </a>
+      <a href="{{ url_for('login', role='lecturer') }}" class="btn accent"
+         style="width:100%; justify-content:center; padding:14px; font-size:16px;">
+        Lecturer
+      </a>
+      <a href="{{ url_for('login', role='student') }}" class="btn accent"
+         style="width:100%; justify-content:center; padding:14px; font-size:16px;">
+        Student
+      </a>
+    </div>
+  </div>
+</div>
+{% endblock %}
