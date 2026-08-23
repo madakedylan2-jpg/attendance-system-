@@ -109,6 +109,7 @@ def inject_user():
 # ----------------------------------------------------------------------
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    role_hint = request.args.get("role", "")
     if request.method == "POST":
         username = request.form["username"].strip()
         password = request.form["password"]
@@ -146,7 +147,55 @@ def login():
             return redirect(request.args.get("next") or url_for("student_dashboard"))
 
         flash("Invalid username or password.", "error")
-    return render_template("login.html")
+        role_hint = request.form.get("role_hint", role_hint)
+    return render_template("login.html", role_hint=role_hint)
+
+
+@app.route("/admin-recovery", methods=["GET", "POST"])
+def admin_recovery():
+    """
+    Last-resort admin password reset — for when the ONLY admin account is
+    locked out and there's nobody above them to reset it via the normal
+    User Accounts screen.
+
+    Protected by a secret key set as an environment variable on the server
+    (ADMIN_RECOVERY_KEY) — never hardcoded, never shown in the app. Whoever
+    controls the hosting account (Render dashboard) sets this once; anyone
+    without that key cannot use this page. Every use is logged to the audit
+    trail like every other reset.
+    """
+    recovery_key_set = os.environ.get("ADMIN_RECOVERY_KEY")
+    if request.method == "POST":
+        if not recovery_key_set:
+            flash("Recovery is not configured on this server. Set ADMIN_RECOVERY_KEY in your hosting environment variables first.", "error")
+            return render_template("admin_recovery.html")
+        entered_key = request.form.get("recovery_key", "")
+        new_password = request.form.get("new_password", "")
+        username = request.form.get("username", "admin").strip()
+        if entered_key != recovery_key_set:
+            flash("Incorrect recovery key.", "error")
+            return render_template("admin_recovery.html")
+        if len(new_password) < 6:
+            flash("New password must be at least 6 characters.", "error")
+            return render_template("admin_recovery.html")
+        db = get_db()
+        admin_row = db.execute(
+            "SELECT id FROM users WHERE username=? AND role='admin'", (username,)
+        ).fetchone()
+        if not admin_row:
+            db.close()
+            flash(f"No admin account found with username '{username}'.", "error")
+            return render_template("admin_recovery.html")
+        db.execute(
+            "UPDATE users SET password_hash=?, is_active=1 WHERE id=?",
+            (generate_password_hash(new_password), admin_row["id"]),
+        )
+        db.commit()
+        db.close()
+        log_action("password_reset", f"admin-recovery: password reset for admin username={username}")
+        flash(f"Password for '{username}' has been reset. You can now log in.", "success")
+        return redirect(url_for("login"))
+    return render_template("admin_recovery.html")
 
 
 @app.route("/logout")
@@ -160,12 +209,25 @@ def logout():
 @app.route("/")
 def index():
     if "role" not in session:
-        return redirect(url_for("login"))
+        return redirect(url_for("select_role"))
     if session["role"] == "admin":
         return redirect(url_for("admin_dashboard"))
     if session["role"] == "student":
         return redirect(url_for("student_dashboard"))
     return redirect(url_for("lecturer_dashboard"))
+
+
+@app.route("/select-role")
+def select_role():
+    """Landing page: pick Admin / Lecturer / Student before signing in.
+    Each card links to the same login form, but with a role hint so the
+    right 'forgot password' guidance shows (admin gets the self-service
+    recovery link; lecturer/student are told to contact their admin,
+    since only an admin can reset their password from User Accounts /
+    the student's detail page)."""
+    if "role" in session:
+        return redirect(url_for("index"))
+    return render_template("select_role.html")
 
 
 # ----------------------------------------------------------------------
