@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Backup{% endblock %}
+{% block content %}
+<span class="eyebrow">System</span>
+<h1>Backup</h1>
+<div class="barcode-rule"></div>
+
+<div class="card" style="max-width:520px;">
+  <h3>Database backup</h3>
+  {% if db_exists %}
+    <p>The entire system lives in one SQLite file — students, courses, sessions, attendance records, and the audit trail. Download a timestamped copy any time; nothing here interrupts the running system.</p>
+    <table style="margin-top:8px; margin-bottom:16px;">
+      <tr><th style="width:140px;">Current size</th><td>{{ db_size_kb }} KB</td></tr>
+    </table>
+    <a class="btn accent" href="{{ url_for('backup_download') }}">Download backup (.db)</a>
+    <p style="margin-top:16px; font-size:0.8rem;">
+      To restore, stop the app, replace <code>instance/attendance.db</code> with the downloaded file
+      (renamed to <code>attendance.db</code>), then restart.
+    </p>
+  {% else %}
+    <p class="empty-state">No database file found yet — it's created automatically the first time the app runs.</p>
+  {% endif %}
+</div>
+{% endblock %}

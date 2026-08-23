@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}At-Risk Students{% endblock %}
+{% block content %}
+<span class="eyebrow">Records</span>
+<h1>At-risk students</h1>
+<p>Students currently below the {{ threshold }}% attendance threshold, for early intervention — sorted worst-first.</p>
+<div class="barcode-rule"></div>
+
+<div class="grid cols-2" style="margin-bottom:18px;">
+  <div class="card stat">
+    <div class="num">{{ at_risk|length }}</div>
+    <div class="label">Flagged enrollments below threshold</div>
+  </div>
+  <div class="card stat">
+    <div class="num">{{ threshold }}%</div>
+    <div class="label">Current threshold (Settings)</div>
+  </div>
+</div>
+
+{% if at_risk %}
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Student</th><th>Course</th><th>Lecturer</th><th>Sessions</th><th>Attended</th><th>%</th><th></th></tr></thead>
+  <tbody>
+  {% for r in at_risk %}
+    <tr>
+      <td>{{ r.full_name }}<br><span class="mono" style="color:#8a90a3; font-size:0.76rem;">{{ r.reg_number }}</span></td>
+      <td>{{ r.course_code }} — {{ r.course_name }}</td>
+      <td>{{ r.lecturer_name or '—' }}</td>
+      <td>{{ r.total }}</td>
+      <td>{{ r.attended }}</td>
+      <td><span class="badge absent">{{ r.pct }}%</span></td>
+      <td><a class="btn small ghost" href="{{ url_for('student_detail', student_id=r.student_id) }}">View student</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="card empty-state">
+  <h3>Nobody currently below threshold</h3>
+  <p>Every enrolled student with at least one session held is at or above {{ threshold }}% attendance.</p>
+</div>
+{% endif %}
+{% endblock %}

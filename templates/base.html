@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}Attendance System{% endblock %} · {{ institution_name }}</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2218%22 fill=%22%231F2937%22/><rect x=%2222%22 y=%2232%22 width=%228%22 height=%2236%22 fill=%22%23E8A33D%22/><rect x=%2236%22 y=%2232%22 width=%224%22 height=%2236%22 fill=%22%23fff%22/><rect x=%2246%22 y=%2232%22 width=%2210%22 height=%2236%22 fill=%22%23E8A33D%22/><rect x=%2262%22 y=%2232%22 width=%224%22 height=%2236%22 fill=%22%23fff%22/><rect x=%2272%22 y=%2232%22 width=%228%22 height=%2236%22 fill=%22%23E8A33D%22/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+{% if current_user.id %}
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">{{ institution_name }}
+      <small>SOFTWARE-ONLY · CODE128</small>
+    </div>
+    <div class="barcode-rule accent" style="height:6px;"></div>
+    <nav class="nav">
+      {% if current_user.role == 'admin' %}
+        <span class="section-label">Overview</span>
+        <a href="{{ url_for('admin_dashboard') }}" class="{{ 'active' if request.endpoint=='admin_dashboard' }}">Dashboard</a>
+        <span class="section-label">Records</span>
+        <a href="{{ url_for('students_list') }}" class="{{ 'active' if request.endpoint in ['students_list','student_add','student_detail'] }}">Students</a>
+        <a href="{{ url_for('lecturers_list') }}" class="{{ 'active' if request.endpoint in ['lecturers_list','user_detail'] }}">Lecturers</a>
+        <a href="{{ url_for('courses_list') }}" class="{{ 'active' if request.endpoint in ['courses_list','course_sessions'] }}">Courses &amp; Sessions</a>
+        <a href="{{ url_for('attendance_all') }}" class="{{ 'active' if request.endpoint=='attendance_all' }}">All Attendance</a>
+        <span class="section-label">System</span>
+        <a href="{{ url_for('reports') }}" class="{{ 'active' if request.endpoint in ['reports','reports_generate'] }}">Reports</a>
+        <a href="{{ url_for('users_list') }}" class="{{ 'active' if request.endpoint=='users_list' }}">User Accounts</a>
+        <a href="{{ url_for('audit_log_view') }}" class="{{ 'active' if request.endpoint=='audit_log_view' }}">Audit Trail</a>
+        <a href="{{ url_for('settings_page') }}" class="{{ 'active' if request.endpoint=='settings_page' }}">Settings</a>
+        <a href="{{ url_for('backup_page') }}" class="{{ 'active' if request.endpoint in ['backup_page','backup_download'] }}">Backup</a>
+        <span class="section-label">Messages</span>
+        <a href="{{ url_for('messages_compose') }}" class="{{ 'active' if request.endpoint=='messages_compose' }}">Compose Message</a>
+        <a href="{{ url_for('messages_sent') }}" class="{{ 'active' if request.endpoint=='messages_sent' }}">Sent Messages</a>
+      {% elif current_user.role == 'lecturer' %}
+        <span class="section-label">Lecturer</span>
+        <a href="{{ url_for('lecturer_dashboard') }}" class="{{ 'active' if request.endpoint=='lecturer_dashboard' }}">My Courses</a>
+        <a href="{{ url_for('reports') }}" class="{{ 'active' if request.endpoint in ['reports','reports_generate'] }}">Reports</a>
+        <span class="section-label">Messages</span>
+        <a href="{{ url_for('messages_inbox') }}" class="{{ 'active' if request.endpoint=='messages_inbox' }}">Inbox{% if unread_message_count %} <span class="badge late">{{ unread_message_count }}</span>{% endif %}</a>
+        <a href="{{ url_for('messages_compose') }}" class="{{ 'active' if request.endpoint=='messages_compose' }}">Compose Message</a>
+        <a href="{{ url_for('messages_sent') }}" class="{{ 'active' if request.endpoint=='messages_sent' }}">Sent Messages</a>
+      {% elif current_user.role == 'student' %}
+        <span class="section-label">Student</span>
+        <a href="{{ url_for('student_dashboard') }}" class="{{ 'active' if request.endpoint=='student_dashboard' }}">My Attendance</a>
+        <span class="section-label">Messages</span>
+        <a href="{{ url_for('messages_inbox') }}" class="{{ 'active' if request.endpoint=='messages_inbox' }}">Inbox{% if unread_message_count %} <span class="badge late">{{ unread_message_count }}</span>{% endif %}</a>
+      {% endif %}
+      <span class="section-label">Account</span>
+      <a href="{{ url_for('profile') }}" class="{{ 'active' if request.endpoint=='profile' }}">Profile</a>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="who">{{ current_user.name }}</div>
+      <span class="badge {{ current_user.role }}">{{ current_user.role }}</span>
+      <form action="{{ url_for('logout') }}" method="get" style="margin-top:10px;">
+        <button type="submit">Sign out →</button>
+      </form>
+    </div>
+  </aside>
+  <main class="main">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="flash {{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+<script>
+// Global: any link/button with class "btn-loading-on-click" shows a spinner
+// while the browser navigates/downloads — no per-page JS needed.
+document.querySelectorAll("a.btn, form button.btn[type=submit]").forEach(function (el) {
+  const isDownloadish = el.hasAttribute("download") ||
+    /\/(reports|backup|id-cards)/.test(el.getAttribute("href") || "") ||
+    (el.closest("form") && /\/(reports|backup)/.test(el.closest("form").action || ""));
+  if (!isDownloadish) return;
+  el.addEventListener("click", function () {
+    el.classList.add("loading");
+    setTimeout(function () { el.classList.remove("loading"); }, 2500);
+  });
+});
+</script>
+{% else %}
+  {% block content_bare %}{% endblock %}
+{% endif %}
+</body>
+</html>

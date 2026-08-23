@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<span class="eyebrow">Overview</span>
+<div class="topline">
+  <h1>Administrator Dashboard</h1>
+  <a href="{{ url_for('courses_list') }}" class="btn accent">+ Schedule a session</a>
+</div>
+<div class="barcode-rule"></div>
+
+<div class="grid cols-4">
+  <div class="card stat">
+    <div class="num">{{ total_students }}</div>
+    <div class="label">Active students</div>
+  </div>
+  <div class="card stat">
+    <div class="num">{{ total_courses }}</div>
+    <div class="label">Courses</div>
+  </div>
+  <div class="card stat">
+    <div class="num">{{ today_present }}</div>
+    <div class="label">Marked present today</div>
+  </div>
+  <div class="card stat">
+    <div class="num">{{ (100 * today_present / total_students) | round(0, 'floor') if total_students else 0 }}%</div>
+    <div class="label">Today's coverage</div>
+  </div>
+</div>
+
+<div class="grid cols-2" style="margin-top:22px;">
+  <div class="card">
+    <h3>7-day attendance trend</h3>
+    <canvas id="trendChart" height="160"></canvas>
+  </div>
+  <div class="card">
+    <h3>Most recent scans</h3>
+    <div class="table-wrap" style="border:none;">
+      <table>
+        <thead><tr><th>Student</th><th>Course</th><th>Status</th><th>Method</th></tr></thead>
+        <tbody>
+        {% for r in recent %}
+          <tr>
+            <td>{{ r.full_name }}<br><span class="mono" style="color:#8a90a3; font-size:0.76rem;">{{ r.reg_number }}</span></td>
+            <td>{{ r.course_name }}</td>
+            <td><span class="badge {{ r.status }}">{{ r.status }}</span></td>
+            <td class="mono" style="font-size:0.78rem;">{{ r.method }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4" class="empty-state">📭 No attendance recorded yet.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card" style="margin-top:22px;">
+  <h3>⚠ At-risk students <span style="font-weight:400; color:#8a90a3; font-size:0.85rem;">— below {{ low_threshold }}% attendance</span></h3>
+  <div class="table-wrap" style="border:none;">
+    <table>
+      <thead><tr><th>Student</th><th>Sessions attended</th><th>Attendance %</th></tr></thead>
+      <tbody>
+      {% for s in at_risk %}
+        <tr>
+          <td>{{ s.full_name }}<br><span class="mono" style="color:#8a90a3; font-size:0.76rem;">{{ s.reg_number }}</span></td>
+          <td>{{ s.attended }} / {{ s.total_sessions }}</td>
+          <td><span class="badge {{ 'absent' if s.pct < low_threshold / 2 else 'late' }}">{{ s.pct }}%</span></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="3">No students currently below the threshold. 🎉</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const trendData = {{ trend | tojson }};
+new Chart(document.getElementById('trendChart'), {
+  type: 'line',
+  data: {
+    labels: trendData.map(d => d.day),
+    datasets: [{
+      label: 'Present',
+      data: trendData.map(d => d.cnt),
+      borderColor: '#E8A33D',
+      backgroundColor: 'rgba(232,163,61,0.15)',
+      fill: true,
+      tension: 0.3,
+    }]
+  },
+  options: { plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true } } }
+});
+</script>
+{% endblock %}

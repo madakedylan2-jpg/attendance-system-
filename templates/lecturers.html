@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Lecturers{% endblock %}
+{% block content %}
+<span class="eyebrow">Records</span>
+<div class="topline">
+  <h1>Lecturers</h1>
+  <a href="{{ url_for('users_list') }}" class="btn ghost">Manage accounts</a>
+</div>
+<div class="barcode-rule"></div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Name</th><th>Courses assigned</th><th>Sessions run</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {% for l in lecturers %}
+    <tr>
+      <td><a href="{{ url_for('user_detail', user_id=l.id) }}">{{ l.full_name }}</a><br><span class="mono" style="color:#8a90a3; font-size:0.76rem;">{{ l.username }}</span></td>
+      <td>{{ l.course_count }}</td>
+      <td>{{ l.session_count }}</td>
+      <td><span class="badge {{ 'active' if l.is_active else 'inactive' }}">{{ 'active' if l.is_active else 'disabled' }}</span></td>
+      <td><a class="btn small ghost" href="{{ url_for('user_detail', user_id=l.id) }}">Records</a></td>
+    </tr>
+  {% else %}
+    <tr><td colspan="5">No lecturers added yet — create one from User Accounts.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

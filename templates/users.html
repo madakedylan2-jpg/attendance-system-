@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}User Accounts{% endblock %}
+{% block content %}
+<span class="eyebrow">System</span>
+<h1>User accounts</h1>
+<div class="barcode-rule"></div>
+
+<div class="grid cols-2">
+  <div class="card">
+    <h3>Create account</h3>
+    <form method="post">
+      <label for="full_name">Full name</label>
+      <input type="text" id="full_name" name="full_name" required>
+      <div class="field-row">
+        <div>
+          <label for="username">Username</label>
+          <input type="text" id="username" name="username" required>
+        </div>
+        <div>
+          <label for="role">Role</label>
+          <select name="role" id="role">
+            <option value="lecturer">Lecturer</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+      </div>
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" required>
+      <button class="btn accent" type="submit" style="margin-top:16px;">Create account</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3>All accounts</h3>
+    <div class="table-wrap" style="border:none;">
+      <table>
+        <thead><tr><th>Name</th><th>Role</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+        {% for u in users %}
+          <tr>
+            <td><a href="{{ url_for('user_detail', user_id=u.id) }}">{{ u.full_name }}</a><br><span class="mono" style="color:#8a90a3; font-size:0.76rem;">{{ u.username }}</span></td>
+            <td><span class="badge {{ u.role }}">{{ u.role }}</span></td>
+            <td><span class="badge {{ 'active' if u.is_active else 'inactive' }}">{{ 'active' if u.is_active else 'disabled' }}</span></td>
+            <td>
+              <a class="btn small ghost" href="{{ url_for('user_detail', user_id=u.id) }}">Records</a>
+              <form method="post" action="{{ url_for('user_toggle', user_id=u.id) }}" style="display:inline;">
+                <button class="btn small ghost" type="submit">{{ 'Disable' if u.is_active else 'Enable' }}</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}All Attendance{% endblock %}
+{% block content %}
+<span class="eyebrow">Records</span>
+<h1>All attendance (latest 200)</h1>
+<div class="barcode-rule"></div>
+
+<form method="get" style="max-width:340px; margin-bottom:16px;">
+  <label for="lecturer_id">Filter by lecturer</label>
+  <select name="lecturer_id" id="lecturer_id" onchange="this.form.submit()">
+    <option value="">All lecturers</option>
+    {% for l in lecturers %}
+      <option value="{{ l.id }}" {{ 'selected' if lecturer_id|string == l.id|string }}>{{ l.full_name }}</option>
+    {% endfor %}
+  </select>
+</form>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Timestamp</th><th>Student</th><th>Course</th><th>Lecturer</th><th>Date</th><th>Status</th><th>Method</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td class="mono">{{ r.timestamp }}</td>
+      <td>{{ r.full_name }}<br><span class="mono" style="color:#8a90a3; font-size:0.76rem;">{{ r.reg_number }}</span></td>
+      <td>{{ r.course_code }} — {{ r.course_name }}</td>
+      <td>{{ r.lecturer_name or '—' }}</td>
+      <td class="mono">{{ r.session_date }}</td>
+      <td><span class="badge {{ r.status }}">{{ r.status }}</span></td>
+      <td class="mono" style="font-size:0.78rem;">{{ r.method }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="7">No attendance recorded yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

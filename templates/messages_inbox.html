@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Inbox{% endblock %}
+{% block content %}
+<h1>Inbox</h1>
+<div class="barcode-rule"></div>
+
+<div class="scan-feed" style="max-height:none;">
+{% for m in messages %}
+  <div class="card" style="margin-bottom:12px; {% if not m.read_at %}border-left:3px solid #E8A33D;{% endif %}">
+    <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:6px;">
+      <strong>{{ m.subject }}</strong>
+      <span class="mono" style="color:#8a90a3; font-size:0.78rem;">{{ m.created_at }}</span>
+    </div>
+    <div style="color:#8a90a3; font-size:0.85rem; margin:4px 0 10px;">
+      From: {{ m.sender_name }} <span class="badge {{ m.sender_role }}">{{ m.sender_role }}</span>
+      {% if not m.read_at %}<span class="badge late" style="margin-left:6px;">unread</span>{% endif %}
+    </div>
+    <p style="white-space:pre-wrap; margin:0;">{{ m.body }}</p>
+    {% if not m.read_at %}
+    <form method="post" action="{{ url_for('messages_mark_read', recipient_row_id=m.recipient_row_id) }}" style="margin-top:10px;">
+      <button class="btn ghost" type="submit">Mark as read</button>
+    </form>
+    {% endif %}
+  </div>
+{% else %}
+  <div class="empty-state">📭 No messages yet.</div>
+{% endfor %}
+</div>
+{% endblock %}

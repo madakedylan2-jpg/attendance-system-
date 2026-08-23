@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Courses{% endblock %}
+{% block content %}
+<span class="eyebrow">Records</span>
+<h1>Courses &amp; Sessions</h1>
+<div class="barcode-rule"></div>
+
+<div class="grid cols-2">
+  <div class="card">
+    <h3>Add a course</h3>
+    <form method="post">
+      <div class="field-row">
+        <div>
+          <label for="code">Course code</label>
+          <input type="text" id="code" name="code" required placeholder="e.g. CS201">
+        </div>
+        <div>
+          <label for="lecturer_id">Lecturer</label>
+          <select name="lecturer_id" id="lecturer_id">
+            <option value="">— Unassigned —</option>
+            {% for l in lecturers %}<option value="{{ l.id }}">{{ l.full_name }}</option>{% endfor %}
+          </select>
+        </div>
+      </div>
+      <label for="name">Course name</label>
+      <input type="text" id="name" name="name" required>
+      <button class="btn accent" type="submit" style="margin-top:16px;">Create course</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3>All courses</h3>
+    <div class="table-wrap" style="border:none;">
+      <table>
+        <thead><tr><th>Code</th><th>Name</th><th>Lecturer</th><th></th></tr></thead>
+        <tbody>
+        {% for c in courses %}
+          <tr>
+            <td class="mono">{{ c.code }}</td>
+            <td>{{ c.name }}</td>
+            <td>{{ c.lecturer_name or '—' }}</td>
+            <td><a class="btn small ghost" href="{{ url_for('course_sessions', course_id=c.id) }}">Sessions</a></td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4">No courses yet.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

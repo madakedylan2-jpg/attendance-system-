@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}My Courses{% endblock %}
+{% block content %}
+<span class="eyebrow">Lecturer</span>
+<h1>My Courses</h1>
+<div class="barcode-rule"></div>
+
+{% if courses %}
+<div class="grid cols-3">
+  {% for c in courses %}
+  <div class="card">
+    <h3>{{ c.code }}</h3>
+    <p>{{ c.name }}</p>
+    <a class="btn small ghost" href="{{ url_for('course_sessions', course_id=c.id) }}">Sessions &amp; attendance →</a>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card empty-state">
+  <h3>No courses assigned yet</h3>
+  <p>Ask an administrator to assign you as the lecturer for a course.</p>
+</div>
+{% endif %}
+{% endblock %}

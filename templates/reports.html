@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Reports{% endblock %}
+{% block content %}
+<span class="eyebrow">System</span>
+<h1>Generate a report</h1>
+<p>Filter by course, lecturer, and date range, then export to PDF or Excel.</p>
+<div class="barcode-rule"></div>
+
+<div class="card" style="max-width:560px;">
+  <form method="get" action="{{ url_for('reports_generate') }}">
+    <label for="course_id">Course</label>
+    <select name="course_id" id="course_id">
+      <option value="">All courses</option>
+      {% for c in courses %}<option value="{{ c.id }}">{{ c.code }} — {{ c.name }}</option>{% endfor %}
+    </select>
+
+    {% if lecturers %}
+    <label for="lecturer_id">Lecturer</label>
+    <select name="lecturer_id" id="lecturer_id">
+      <option value="">All lecturers</option>
+      {% for l in lecturers %}<option value="{{ l.id }}">{{ l.full_name }}</option>{% endfor %}
+    </select>
+    {% endif %}
+
+    <div class="field-row">
+      <div>
+        <label for="start_date">From</label>
+        <input type="date" name="start_date" id="start_date">
+      </div>
+      <div>
+        <label for="end_date">To</label>
+        <input type="date" name="end_date" id="end_date">
+      </div>
+    </div>
+
+    <label for="format">Format</label>
+    <select name="format" id="format">
+      <option value="pdf">PDF</option>
+      <option value="excel">Excel (.xlsx)</option>
+    </select>
+
+    <button class="btn accent" type="submit" style="margin-top:18px;">Download report</button>
+  </form>
+</div>
+{% endblock %}

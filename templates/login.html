@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Sign in{% endblock %}
+{% block content_bare %}
+<div class="login-shell">
+  <div class="login-card">
+    <div class="brand">TELONE CENTRE FOR LEARNING TRACKING SYSTEM</div>
+    <div class="barcode-rule" style="height:6px;"></div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="flash {{ category }}">
+            <span>{{ message }}</span>
+            <button type="button" class="dismiss" onclick="this.parentElement.remove()" aria-label="Dismiss">×</button>
+          </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <form method="post">
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username" required autofocus>
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" required>
+      <button class="btn accent" type="submit" style="width:100%; justify-content:center; margin-top:18px;">Sign in</button>
+    </form>
+    <div class="login-hint">First run default → admin / admin123</div>
+    <div class="login-hint">Students → sign in with reg number as both username and password</div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}{{ student.full_name }}{% endblock %}
+{% block content %}
+<span class="eyebrow">Records · Student</span>
+<div class="topline">
+  <h1>{{ student.full_name }}</h1>
+  <form method="post" action="{{ url_for('student_toggle_status', student_id=student.id) }}">
+    <button class="btn {{ 'danger' if student.status == 'active' else 'accent' }}" type="submit">
+      {{ 'Deactivate' if student.status == 'active' else 'Reactivate' }}
+    </button>
+  </form>
+</div>
+<div class="barcode-rule"></div>
+
+<div class="grid cols-2">
+  <div class="card">
+    <h3>Bio-data</h3>
+    <table style="margin-top:8px;">
+      <tr><th style="width:140px;">Reg number</th><td class="mono">{{ student.reg_number }}</td></tr>
+      <tr><th>Email</th><td>{{ student.email or '—' }}</td></tr>
+      <tr><th>Department</th><td>{{ student.department or '—' }}</td></tr>
+      <tr><th>Status</th><td><span class="badge {{ student.status }}">{{ student.status }}</span></td></tr>
+    </table>
+
+    <h3 style="margin-top:20px;">Enrolled courses</h3>
+    <p>
+      {% for c in courses %}<span class="badge admin" style="margin-right:6px;">{{ c.code }}</span>{% else %}Not enrolled in any course yet.{% endfor %}
+    </p>
+    <form method="post" action="{{ url_for('student_enroll', student_id=student.id) }}" class="field-row" style="align-items:flex-end;">
+      <div>
+        <label for="course_id">Enroll in course</label>
+        <select name="course_id" id="course_id">
+          {% for c in all_courses %}<option value="{{ c.id }}">{{ c.code }} — {{ c.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <button class="btn small ghost" type="submit">Enroll</button>
+    </form>
+  </div>
+
+  <div class="card" style="text-align:center;">
+    <h3>Student barcode</h3>
+    <p>This is what the camera scanner (or manual entry) reads at check-in — generated and displayed entirely in software.</p>
+    <svg id="student-barcode" style="max-width:100%;"></svg>
+    <button class="btn ghost small" onclick="window.print()">Print barcode card</button>
+  </div>
+</div>
+
+<div class="card" style="margin-top:18px;">
+  <h3>Recent attendance</h3>
+  <div class="table-wrap" style="border:none;">
+    <table>
+      <thead><tr><th>Timestamp</th><th>Course</th><th>Status</th><th>Method</th></tr></thead>
+      <tbody>
+      {% for h in history %}
+        <tr>
+          <td class="mono">{{ h.timestamp }}</td>
+          <td>{{ h.course_name }}</td>
+          <td><span class="badge {{ h.status }}">{{ h.status }}</span></td>
+          <td class="mono" style="font-size:0.78rem;">{{ h.method }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4">No attendance recorded yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+<script src="{{ url_for('static', filename='js/barcode.js') }}"></script>
+<script>renderBarcode('student-barcode', {{ student.barcode_value | tojson }});</script>
+{% endblock %}

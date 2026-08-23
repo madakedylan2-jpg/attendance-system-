@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}{{ staff.full_name }}{% endblock %}
+{% block content %}
+<span class="eyebrow">System · User records</span>
+<div class="topline">
+  <h1>{{ staff.full_name }}</h1>
+  <span class="badge {{ staff.role }}">{{ staff.role }}</span>
+</div>
+<div class="barcode-rule"></div>
+
+<div class="grid cols-4">
+  <div class="card stat">
+    <div class="num">{{ courses|length }}</div>
+    <div class="label">Courses assigned</div>
+  </div>
+  <div class="card stat">
+    <div class="num">{{ stats.sessions_run or 0 }}</div>
+    <div class="label">Sessions run</div>
+  </div>
+  <div class="card stat">
+    <div class="num">{{ stats.attendance_records or 0 }}</div>
+    <div class="label">Attendance records captured</div>
+  </div>
+  <div class="card stat">
+    <div class="num">{{ adjustments|length }}</div>
+    <div class="label">Manual adjustments made</div>
+  </div>
+</div>
+
+<div class="grid cols-2" style="margin-top:18px;">
+  <div class="card">
+    <h3>Courses</h3>
+    <div class="table-wrap" style="border:none;">
+      <table>
+        <thead><tr><th>Code</th><th>Name</th><th></th></tr></thead>
+        <tbody>
+        {% for c in courses %}
+          <tr>
+            <td class="mono">{{ c.code }}</td>
+            <td>{{ c.name }}</td>
+            <td><a class="btn small ghost" href="{{ url_for('course_sessions', course_id=c.id) }}">Sessions</a></td>
+          </tr>
+        {% else %}
+          <tr><td colspan="3">No courses assigned.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Recent sessions run</h3>
+    <div class="table-wrap" style="border:none;">
+      <table>
+        <thead><tr><th>Date</th><th>Course</th><th>Marked</th></tr></thead>
+        <tbody>
+        {% for s in recent_sessions %}
+          <tr>
+            <td class="mono">{{ s.session_date }} {{ s.start_time }}</td>
+            <td>{{ s.course_code }}</td>
+            <td>{{ s.attended }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="3">No sessions run yet.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card" style="margin-top:18px;">
+  <h3>Manual adjustments made by {{ staff.full_name }}</h3>
+  <p style="font-size:0.85rem;">Every manual change requires a reason and is logged here — see also the full <a href="{{ url_for('audit_log_view') }}">Audit Trail</a>.</p>
+  <div class="table-wrap" style="border:none;">
+    <table>
+      <thead><tr><th>When</th><th>Student</th><th>Course</th><th>New status</th><th>Reason</th></tr></thead>
+      <tbody>
+      {% for a in adjustments %}
+        <tr>
+          <td class="mono">{{ a.timestamp }}</td>
+          <td>{{ a.full_name }} <span class="mono" style="color:#8a90a3; font-size:0.76rem;">{{ a.reg_number }}</span></td>
+          <td>{{ a.course_name }}</td>
+          <td><span class="badge {{ a.status }}">{{ a.status }}</span></td>
+          <td style="font-size:0.85rem;">{{ a.reason }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5">No manual adjustments recorded.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

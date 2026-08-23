@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Compose Message{% endblock %}
+{% block content %}
+<span class="eyebrow">Messages · New</span>
+<h1>Compose message</h1>
+<p>Internal messaging only — nothing leaves the app, no email/SMS server required.</p>
+<div class="barcode-rule"></div>
+
+<div class="card" style="max-width:620px;">
+  <form method="post" id="compose-form">
+    <label for="target_type">Send to</label>
+    <select id="target_type" name="target_type" onchange="toggleTargetFields()">
+      {% if role == 'admin' %}
+        <option value="student">A specific student</option>
+        <option value="lecturer">A specific lecturer</option>
+        <option value="all_students">All students</option>
+        <option value="all_lecturers">All lecturers</option>
+      {% else %}
+        <option value="student">A specific student (in my courses)</option>
+        <option value="course_students">All students in one of my courses</option>
+      {% endif %}
+    </select>
+
+    {% if role == 'admin' %}
+    <div id="field-student">
+      <label for="student_id">Student</label>
+      <select id="student_id" name="student_id">
+        {% for s in students %}
+          <option value="{{ s.id }}">{{ s.full_name }} ({{ s.reg_number }})</option>
+        {% else %}
+          <option value="" disabled>No active students found</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div id="field-lecturer" style="display:none;">
+      <label for="lecturer_id">Lecturer</label>
+      <select id="lecturer_id" name="lecturer_id">
+        {% for l in lecturers %}
+          <option value="{{ l.id }}">{{ l.full_name }}</option>
+        {% else %}
+          <option value="" disabled>No lecturers found</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% else %}
+    <div id="field-student">
+      <label for="student_id">Student</label>
+      <select id="student_id" name="student_id">
+        {% for s in students %}
+          <option value="{{ s.id }}">{{ s.full_name }} ({{ s.reg_number }})</option>
+        {% else %}
+          <option value="" disabled>No students enrolled in your courses yet</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div id="field-course_students" style="display:none;">
+      <label for="course_id">Course</label>
+      <select id="course_id" name="course_id">
+        {% for c in courses %}
+          <option value="{{ c.id }}">{{ c.code }} — {{ c.name }}</option>
+        {% else %}
+          <option value="" disabled>You have no courses yet</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
+
+    <label for="subject">Subject</label>
+    <input type="text" id="subject" name="subject" required maxlength="150" placeholder="e.g. Reminder: submit your project proposal">
+
+    <label for="body">Message</label>
+    <textarea id="body" name="body" rows="6" required placeholder="Write your message..."></textarea>
+
+    <button class="btn accent" type="submit" style="margin-top:18px;">Send message</button>
+    <a href="{{ url_for('messages_sent') }}" class="btn ghost" style="margin-top:18px;">View sent messages</a>
+  </form>
+</div>
+
+<script>
+function toggleTargetFields() {
+  const val = document.getElementById("target_type").value;
+  document.querySelectorAll("[id^='field-']").forEach(el => el.style.display = "none");
+  const el = document.getElementById("field-" + val);
+  if (el) el.style.display = "block";
+}
+toggleTargetFields();
+</script>
+{% endblock %}

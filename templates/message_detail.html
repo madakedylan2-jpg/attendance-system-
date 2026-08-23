@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}{{ msg.subject }}{% endblock %}
+{% block content %}
+<span class="eyebrow">Communication</span>
+<div class="topline">
+  <h1>{{ msg.subject }}</h1>
+  <a href="{{ url_for('messages_inbox') }}" class="btn ghost">← Back to inbox</a>
+</div>
+<div class="barcode-rule"></div>
+
+<div class="card" style="max-width:640px;">
+  <p style="font-size:0.85rem; color:var(--ink-soft);">
+    From <strong>{{ msg.sender_name }}</strong> <span class="badge {{ msg.sender_role }}">{{ msg.sender_role }}</span>
+    &nbsp;·&nbsp; <span class="mono">{{ msg.created_at }}</span>
+  </p>
+  <div class="barcode-rule" style="height:4px;"></div>
+  <p style="white-space:pre-wrap; color:var(--ink);">{{ msg.body }}</p>
+</div>
+{% endblock %}

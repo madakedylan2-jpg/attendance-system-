@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Take Attendance{% endblock %}
+{% block content %}
+<span class="eyebrow">{{ sess.course_code }} · {{ sess.session_date }}</span>
+<h1>Take attendance — {{ sess.course_name }}</h1>
+<p>No dedicated scanner required: use this device's camera, or type the student's barcode/ID directly.</p>
+<span id="late-countdown" class="countdown-chip">⏱ Calculating late cutoff…</span>
+<div class="barcode-rule"></div>
+
+<div class="grid cols-2">
+  <div class="scan-panel">
+    <h3 style="color:#fff;">Camera scan</h3>
+    <div id="confirm-card" class="confirm-card hidden">
+      <div class="confirm-name" id="confirm-name"></div>
+      <div class="confirm-reg" id="confirm-reg"></div>
+      <div class="confirm-badge" id="confirm-badge"></div>
+    </div>
+    <video id="reader" muted playsinline></video>
+    <div style="margin-top:10px;">
+      <button id="start-camera-btn" class="btn accent" type="button">Start camera</button>
+      <button id="stop-camera-btn" class="btn ghost" type="button" style="display:none; color:#fff; border-color:rgba(255,255,255,0.3);">Stop camera</button>
+      <button id="upload-photo-btn" class="btn ghost" type="button" style="color:#fff; border-color:rgba(255,255,255,0.3);">📷 Scan a photo instead</button>
+      <input type="file" id="upload-photo-input" accept="image/*" capture="environment" style="display:none;">
+    </div>
+
+    <form id="manual-scan-form" class="manual-scan">
+      <input type="text" id="manual-barcode" placeholder="Or type barcode / reg number and press Enter" autocomplete="off">
+      <button class="btn accent" type="submit">Mark</button>
+    </form>
+
+    <div id="scan-status" class="scan-status idle">Ready — start the camera or type a barcode to begin.</div>
+
+    <div class="scan-feed" id="scan-feed"></div>
+  </div>
+
+  <div class="card">
+    <h3>Marked this session ({{ marked|length }})</h3>
+    <div class="table-wrap" style="border:none; max-height:480px; overflow:auto;">
+      <table>
+        <thead><tr><th>Student</th><th>Status</th><th>Time</th><th>Adjust</th></tr></thead>
+        <tbody id="marked-body">
+        {% for m in marked %}
+          <tr>
+            <td>{{ m.full_name }}<br><span class="mono" style="color:#8a90a3; font-size:0.76rem;">{{ m.reg_number }}</span></td>
+            <td><span class="badge {{ m.status }}">{{ m.status }}</span></td>
+            <td class="mono" style="font-size:0.78rem;">{{ m.timestamp }}</td>
+            <td>
+              <details>
+                <summary style="cursor:pointer; font-size:0.8rem;">Edit</summary>
+                <form method="post" action="{{ url_for('attendance_manual_adjust', record_id=m.id) }}" style="margin-top:6px;">
+                  <select name="status" style="font-size:0.8rem; padding:4px;">
+                    <option value="present" {{ 'selected' if m.status=='present' }}>Present</option>
+                    <option value="late" {{ 'selected' if m.status=='late' }}>Late</option>
+                    <option value="absent" {{ 'selected' if m.status=='absent' }}>Absent</option>
+                  </select>
+                  <input type="text" name="reason" placeholder="Reason (required)" required style="font-size:0.8rem; padding:4px; margin-top:4px;">
+                  <button class="btn small ghost" type="submit" style="margin-top:4px;">Save</button>
+                </form>
+              </details>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4" class="empty-state">🎫 No one marked yet — scan or type the first barcode.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/@zxing/library@0.20.0"></script>
+<script src="{{ url_for('static', filename='js/scanner.js') }}"></script>
+<script>
+initAttendanceScanner({{ sess.id }});
+
+// Live "late after HH:MM" countdown chip, matching the server's own
+// late-detection rule (session start_time + late_threshold_minutes).
+(function () {
+  const chip = document.getElementById("late-countdown");
+  const startDt = new Date("{{ sess.session_date }}T{{ sess.start_time }}:00");
+  const cutoff = new Date(startDt.getTime() + {{ late_threshold_minutes }} * 60000);
+  const cutoffLabel = cutoff.toTimeString().slice(0, 5);
+
+  function tick() {
+    const now = new Date();
+    if (now >= cutoff) {
+      chip.textContent = `⏱ Late after ${cutoffLabel} — new scans now marked LATE`;
+      chip.classList.add("late-now");
+    } else {
+      const mins = Math.ceil((cutoff - now) / 60000);
+      chip.textContent = `⏱ On time until ${cutoffLabel} (${mins} min left)`;
+      chip.classList.remove("late-now");
+    }
+  }
+  tick();
+  setInterval(tick, 15000);
+})();
+</script>
+{% endblock %}

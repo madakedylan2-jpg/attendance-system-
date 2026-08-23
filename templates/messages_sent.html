@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Sent Messages{% endblock %}
+{% block content %}
+<div class="topline">
+  <h1>Sent messages</h1>
+  <a href="{{ url_for('messages_compose') }}" class="btn accent">+ Compose message</a>
+</div>
+<div class="barcode-rule"></div>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Subject</th><th>To</th><th>Recipients</th><th>Read</th><th>Sent</th></tr></thead>
+    <tbody>
+    {% for m in messages %}
+      <tr>
+        <td><strong>{{ m.subject }}</strong><br><span style="color:#8a90a3; font-size:0.82rem;">{{ m.body[:80] }}{% if m.body|length > 80 %}…{% endif %}</span></td>
+        <td>{{ m.target_desc }}</td>
+        <td>{{ m.recipient_count }}</td>
+        <td>{{ m.read_count or 0 }} / {{ m.recipient_count }}</td>
+        <td class="mono" style="font-size:0.8rem;">{{ m.created_at }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="empty-state">✉️ No messages sent yet — <a href="{{ url_for('messages_compose') }}">compose your first one</a>.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

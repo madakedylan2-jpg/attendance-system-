@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}My Attendance{% endblock %}
+{% block content %}
+<span class="eyebrow">Student</span>
+<div class="topline">
+  <h1>{{ student.full_name }}</h1>
+  <span class="mono" style="color:#8a90a3; font-size:0.82rem;">{{ student.reg_number }}</span>
+</div>
+<div class="barcode-rule"></div>
+
+<div class="grid cols-3">
+  <div class="card stat">
+    <div class="num">{{ overall_pct if overall_pct is not none else '—' }}{{ '%' if overall_pct is not none }}</div>
+    <div class="label">Overall attendance</div>
+  </div>
+  <div class="card stat">
+    <div class="num">{{ course_stats | length }}</div>
+    <div class="label">Enrolled courses</div>
+  </div>
+  <div class="card stat">
+    <div class="num">{{ low_attendance_threshold | round(0, 'floor') }}%</div>
+    <div class="label">Minimum required</div>
+  </div>
+</div>
+
+{% if course_stats | selectattr('low') | list %}
+<div class="flash error" style="margin-top:18px;">
+  You're below the {{ low_attendance_threshold | round(0, 'floor') }}% attendance requirement in
+  {{ course_stats | selectattr('low') | map(attribute='code') | join(', ') }}. Please speak with your lecturer.
+</div>
+{% endif %}
+
+<div class="card" style="margin-top:18px;">
+  <h3>Attendance by course</h3>
+  <div class="table-wrap" style="border:none;">
+    <table>
+      <thead><tr><th>Course</th><th>Sessions held</th><th>Attended</th><th>Rate</th></tr></thead>
+      <tbody>
+      {% for c in course_stats %}
+        <tr>
+          <td>{{ c.code }} — {{ c.name }}</td>
+          <td>{{ c.sessions_held }}</td>
+          <td>{{ c.attended }}</td>
+          <td>
+            {% if c.pct is not none %}
+              <span class="badge {{ 'absent' if c.low else 'active' }}">{{ c.pct }}%</span>
+            {% else %}
+              <span class="mono" style="color:#8a90a3;">no sessions yet</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4">Not enrolled in any course yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card" style="margin-top:18px;">
+  <h3>Recent attendance</h3>
+  <div class="table-wrap" style="border:none;">
+    <table>
+      <thead><tr><th>Timestamp</th><th>Course</th><th>Status</th><th>Method</th></tr></thead>
+      <tbody>
+      {% for h in history %}
+        <tr>
+          <td class="mono">{{ h.timestamp }}</td>
+          <td>{{ h.course_code }} — {{ h.course_name }}</td>
+          <td><span class="badge {{ h.status }}">{{ h.status }}</span></td>
+          <td class="mono" style="font-size:0.78rem;">{{ h.method }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4">No attendance recorded yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<div class="card" style="margin-top:18px;">
+  <h3>My barcode / QR</h3>
+  <p style="color:#8a90a3; font-size:0.85rem; margin-top:-6px;">Show this screen to your lecturer if you don't have a physical ID card.</p>
+  <div style="display:flex; gap:24px; align-items:center; flex-wrap:wrap; margin-top:10px;">
+    <div id="student-qr"></div>
+    <div>
+      <svg id="student-barcode-self" style="max-width:260px;"></svg>
+      <div class="mono" style="color:#8a90a3; font-size:0.8rem; margin-top:4px;">{{ student.barcode_value }}</div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+<script>
+new QRCode(document.getElementById("student-qr"), {
+  text: {{ student.barcode_value | tojson }},
+  width: 140, height: 140,
+});
+JsBarcode("#student-barcode-self", {{ student.barcode_value | tojson }}, {
+  format: "CODE128", displayValue: false, height: 60, margin: 0,
+});
+</script>
+{% endblock %}

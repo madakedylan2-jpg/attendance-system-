@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ title }} · {{ institution_name }}</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2218%22 fill=%22%231F2937%22/><rect x=%2222%22 y=%2232%22 width=%228%22 height=%2236%22 fill=%22%23E8A33D%22/><rect x=%2236%22 y=%2232%22 width=%224%22 height=%2236%22 fill=%22%23fff%22/><rect x=%2246%22 y=%2232%22 width=%2210%22 height=%2236%22 fill=%22%23E8A33D%22/><rect x=%2262%22 y=%2232%22 width=%224%22 height=%2236%22 fill=%22%23fff%22/><rect x=%2272%22 y=%2232%22 width=%228%22 height=%2236%22 fill=%22%23E8A33D%22/></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<div class="login-shell">
+  <div class="login-card" style="text-align:center;">
+    <div class="brand" style="justify-content:center;">{{ institution_name }}</div>
+    <div class="barcode-rule accent" style="height:6px;"></div>
+    <div style="font-family: var(--font-display); font-size:3rem; font-weight:700; color: var(--ink); margin: 10px 0 2px;">{{ code }}</div>
+    <h2 style="margin-bottom:8px;">{{ title }}</h2>
+    <p>{{ message }}</p>
+    <a class="btn accent" style="margin-top:16px; width:100%; justify-content:center;"
+       href="{{ url_for('index') if session.get('user_id') else url_for('login') }}">
+      {{ 'Back to dashboard' if session.get('user_id') else 'Go to login' }}
+    </a>
+  </div>
+</div>
+</body>
+</html>

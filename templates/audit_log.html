@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Audit Trail{% endblock %}
+{% block content %}
+<span class="eyebrow">System</span>
+<h1>Audit trail</h1>
+<div class="barcode-rule"></div>
+
+<div class="card" style="margin-bottom:18px;">
+  <form method="get" class="field-row" style="align-items:flex-end;">
+    <div>
+      <label for="action">Filter by action</label>
+      <select name="action" id="action" onchange="this.form.submit()">
+        <option value="">All actions</option>
+        {% for a in actions %}
+          <option value="{{ a.action }}" {{ 'selected' if a.action == action_filter }}>{{ a.action }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </form>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Timestamp</th><th>Actor</th><th>Role</th><th>Action</th><th>Detail</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td class="mono">{{ r.created_at }}</td>
+        <td>{{ r.actor_name or '—' }}</td>
+        <td>{% if r.actor_role %}<span class="badge {{ r.actor_role }}">{{ r.actor_role }}</span>{% else %}—{% endif %}</td>
+        <td class="mono" style="font-size:0.82rem;">{{ r.action }}</td>
+        <td>{{ r.detail or '—' }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5">No audited actions recorded yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p style="margin-top:12px; font-size:0.8rem;">Showing the most recent 300 entries{% if action_filter %} matching "{{ action_filter }}"{% endif %}.</p>
+{% endblock %}
