@@ -3,37 +3,16 @@ Barcode Automated Attendance Tracking System — SOFTWARE-ONLY EDITION
 ======================================================================
 Rebuilt from "Automated Student Attendance Tracking System Using Barcode
 Scanning Technology" (Telone Centre for Learning), with every hardware
-dependency removed:
-
-  DOCUMENT ORIGINAL                    -> SOFTWARE-ONLY REPLACEMENT
-  --------------------------------------------------------------------
-  Dedicated barcode scanner device     -> Laptop/phone camera read in the
-  (illuminator + sensor + decoder)        browser via JavaScript (ZXing),
-                                           OR manual barcode/ID typing.
-  Barcode printed on physical ID card  -> Barcode rendered on-screen /
-                                           printable PDF, generated in
-                                           software (JsBarcode, Code128).
-  Dedicated attendance-taking PC       -> Any device with a web browser.
-  Local server / XAMPP                 -> Self-contained Flask app,
-                                           runs anywhere Python runs.
-
-Everything else the document specified is implemented:
-  - Admin, Lecturer role-based access control
-  - Student CRUD with unique Code128 barcode per student
-  - Course & Session management
-  - Real-time attendance capture with duplicate + invalid-ID detection
-  - Manual adjustment with mandatory reason + audit trail (per 4.8.3)
-  - Dashboard with live stats
-  - PDF / Excel report export with filters (per 1.9.3 / 4.8.4)
-  - Password hashing, session-based auth, role checks (per 3.3.2 security)
+dependency removed.
 """
 import io
 import os
+import secrets
 from functools import wraps
 from datetime import datetime, date
 
 from flask import (
-    Flask, render_template, request, redirect, url_for, session,
+    Flask, render_template, render_template_string, request, redirect, url_for, session,
     flash, jsonify, send_file, abort
 )
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -48,9 +27,6 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("ATTENDANCE_SECRET_KEY", "dev-secret-change-me")
 
 
-# ----------------------------------------------------------------------
-# Auth helpers (Role-Based Access Control — Non-Functional Requirement #2)
-# ----------------------------------------------------------------------
 def login_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
@@ -64,8 +40,6 @@ def role_required(*roles):
     def decorator(view):
         @wraps(view)
         def wrapped(*args, **kwargs):
-            # "role" (not "user_id") is the one session key every logged-in
-            # actor has — staff use user_id, students use student_id.
             if "role" not in session:
                 return redirect(url_for("login", next=request.path))
             if session.get("role") not in roles:
@@ -76,12 +50,6 @@ def role_required(*roles):
 
 
 def log_action(action, detail=""):
-    """
-    Audit trail writer. Admin/lecturer actors live in `users`; student
-    actors live in `students` — two tables with independent id spaces, so
-    audit_log stores the role, id, and name directly instead of a foreign
-    key to either table (see schema.sql for why).
-    """
     db = get_db()
     db.execute(
         "INSERT INTO audit_log (actor_role, actor_id, actor_name, action, detail) VALUES (?,?,?,?,?)",
@@ -105,8 +73,212 @@ def inject_user():
 
 
 # ----------------------------------------------------------------------
-# Auth routes
+# Password reset requests — in-app queue so lecturers/students who are
+# locked out can flag it without needing an admin's phone number, and so
+# admins have a single place (with a nav badge) to see who's waiting.
+# Self-healing table creation: CREATE TABLE IF NOT EXISTS means this does
+# NOT touch any existing data, so it's safe to run against a live DB.
 # ----------------------------------------------------------------------
+def _ensure_reset_requests_table(db):
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS password_reset_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            requester_role TEXT NOT NULL,
+            requester_username TEXT NOT NULL,
+            requester_name TEXT,
+            contact_info TEXT,
+            note TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            resolved_at TEXT,
+            resolved_by TEXT
+        )"""
+    )
+
+
+@app.context_processor
+def inject_pending_reset_count():
+    if session.get("role") != "admin":
+        return {"pending_reset_count": 0}
+    db = get_db()
+    _ensure_reset_requests_table(db)
+    count = db.execute(
+        "SELECT COUNT(*) c FROM password_reset_requests WHERE status='pending'"
+    ).fetchone()["c"]
+    db.close()
+    return {"pending_reset_count": count}
+
+
+@app.route("/password-reset/request", methods=["GET", "POST"])
+def password_reset_request():
+    if request.method == "POST":
+        requester_role = request.form.get("requester_role", "").strip()
+        requester_username = request.form.get("requester_username", "").strip()
+        requester_name = request.form.get("requester_name", "").strip()
+        contact_info = request.form.get("contact_info", "").strip()
+        note = request.form.get("note", "").strip()
+
+        if requester_role not in ("lecturer", "student") or not requester_username:
+            flash("Please select your role and enter your username / registration number.", "error")
+            return redirect(url_for("password_reset_request"))
+
+        db = get_db()
+        _ensure_reset_requests_table(db)
+        db.execute(
+            """INSERT INTO password_reset_requests
+               (requester_role, requester_username, requester_name, contact_info, note)
+               VALUES (?,?,?,?,?)""",
+            (requester_role, requester_username, requester_name, contact_info, note),
+        )
+        db.commit()
+        db.close()
+        flash("Your request has been sent to an admin. You'll be contacted once your password is reset.", "success")
+        return redirect(url_for("login"))
+
+    return render_template_string(
+        """{% extends "base.html" %}
+{% block content_bare %}
+<div style="max-width:480px;margin:60px auto;">
+  <h2>Request a password reset</h2>
+  <p>Locked out? Submit your details and an admin will reset your password.</p>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}{% for category, message in messages %}
+      <div class="flash {{ category }}">{{ message }}</div>
+    {% endfor %}{% endif %}
+  {% endwith %}
+  <form method="post">
+    <label>I am a
+      <select name="requester_role" required>
+        <option value="">-- select --</option>
+        <option value="lecturer">Lecturer</option>
+        <option value="student">Student</option>
+      </select>
+    </label><br><br>
+    <label>Username / Registration number
+      <input type="text" name="requester_username" required>
+    </label><br><br>
+    <label>Full name
+      <input type="text" name="requester_name">
+    </label><br><br>
+    <label>Contact info (email/phone, optional)
+      <input type="text" name="contact_info">
+    </label><br><br>
+    <label>Note (optional)
+      <textarea name="note"></textarea>
+    </label><br><br>
+    <button type="submit" class="btn">Submit request</button>
+    <a href="{{ url_for('login') }}">Back to login</a>
+  </form>
+</div>
+{% endblock %}"""
+    )
+
+
+@app.route("/password-reset-requests", methods=["GET"])
+@role_required("admin")
+def password_reset_requests_view():
+    db = get_db()
+    _ensure_reset_requests_table(db)
+    status_filter = request.args.get("status", "pending")
+    if status_filter == "all":
+        rows = db.execute(
+            "SELECT * FROM password_reset_requests ORDER BY created_at DESC LIMIT 200"
+        ).fetchall()
+    else:
+        rows = db.execute(
+            "SELECT * FROM password_reset_requests WHERE status=? ORDER BY created_at DESC LIMIT 200",
+            (status_filter,),
+        ).fetchall()
+    db.close()
+    return render_template_string(
+        """{% extends "base.html" %}
+{% block content %}
+<h2>Password reset requests</h2>
+<p>
+  <a href="{{ url_for('password_reset_requests_view', status='pending') }}">Pending</a> |
+  <a href="{{ url_for('password_reset_requests_view', status='resolved') }}">Resolved</a> |
+  <a href="{{ url_for('password_reset_requests_view', status='all') }}">All</a>
+</p>
+<table>
+<tr><th>When</th><th>Role</th><th>Username</th><th>Name</th><th>Contact</th><th>Note</th><th>Status</th><th></th></tr>
+{% for r in rows %}
+<tr>
+  <td>{{ r.created_at }}</td>
+  <td>{{ r.requester_role }}</td>
+  <td>{{ r.requester_username }}</td>
+  <td>{{ r.requester_name }}</td>
+  <td>{{ r.contact_info }}</td>
+  <td>{{ r.note }}</td>
+  <td>{{ r.status }}</td>
+  <td>
+    {% if r.status == 'pending' %}
+    <form method="post" action="{{ url_for('password_reset_resolve', request_id=r.id) }}" style="display:inline">
+      <button type="submit" class="btn">Reset &amp; resolve</button>
+    </form>
+    {% endif %}
+  </td>
+</tr>
+{% endfor %}
+</table>
+{% endblock %}""",
+        rows=rows,
+    )
+
+
+@app.route("/password-reset-requests/<int:request_id>/resolve", methods=["POST"])
+@role_required("admin")
+def password_reset_resolve(request_id):
+    db = get_db()
+    _ensure_reset_requests_table(db)
+    req = db.execute("SELECT * FROM password_reset_requests WHERE id=?", (request_id,)).fetchone()
+    if not req:
+        db.close()
+        abort(404)
+
+    if req["requester_role"] == "student":
+        student = db.execute(
+            "SELECT id, reg_number, full_name FROM students WHERE reg_number=?",
+            (req["requester_username"],),
+        ).fetchone()
+        if student:
+            db.execute(
+                "UPDATE students SET password_hash=? WHERE id=?",
+                (generate_password_hash(student["reg_number"]), student["id"]),
+            )
+            flash(
+                f"{student['full_name']}'s password reset to their registration number "
+                f"({student['reg_number']}).", "success",
+            )
+        else:
+            flash(f"No student found with registration number '{req['requester_username']}'.", "error")
+    else:
+        user = db.execute(
+            "SELECT id, username, full_name FROM users WHERE username=? AND role='lecturer'",
+            (req["requester_username"],),
+        ).fetchone()
+        if user:
+            temp_password = secrets.token_urlsafe(6)
+            db.execute(
+                "UPDATE users SET password_hash=? WHERE id=?",
+                (generate_password_hash(temp_password), user["id"]),
+            )
+            flash(
+                f"Temporary password for {user['full_name']} ({user['username']}): "
+                f"{temp_password} — share this with them securely.", "success",
+            )
+        else:
+            flash(f"No lecturer found with username '{req['requester_username']}'.", "error")
+
+    db.execute(
+        "UPDATE password_reset_requests SET status='resolved', resolved_at=datetime('now'), resolved_by=? WHERE id=?",
+        (session.get("full_name"), request_id),
+    )
+    db.commit()
+    db.close()
+    log_action("password_reset", f"resolved request id={request_id} for {req['requester_role']}={req['requester_username']}")
+    return redirect(url_for("password_reset_requests_view"))
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     role_hint = request.args.get("role", "")
@@ -115,7 +287,6 @@ def login():
         password = request.form["password"]
         db = get_db()
 
-        # Staff first (admin/lecturer) — username field.
         user = db.execute(
             "SELECT * FROM users WHERE username = ? AND is_active = 1", (username,)
         ).fetchone()
@@ -132,7 +303,6 @@ def login():
             )
             return redirect(dest)
 
-        # Students log in with their reg_number as the username.
         student = db.execute(
             "SELECT * FROM students WHERE reg_number = ? AND status = 'active'", (username,)
         ).fetchone()
@@ -153,17 +323,6 @@ def login():
 
 @app.route("/admin-recovery", methods=["GET", "POST"])
 def admin_recovery():
-    """
-    Last-resort admin password reset — for when the ONLY admin account is
-    locked out and there's nobody above them to reset it via the normal
-    User Accounts screen.
-
-    Protected by a secret key set as an environment variable on the server
-    (ADMIN_RECOVERY_KEY) — never hardcoded, never shown in the app. Whoever
-    controls the hosting account (Render dashboard) sets this once; anyone
-    without that key cannot use this page. Every use is logged to the audit
-    trail like every other reset.
-    """
     recovery_key_set = os.environ.get("ADMIN_RECOVERY_KEY")
     if request.method == "POST":
         if not recovery_key_set:
@@ -219,20 +378,11 @@ def index():
 
 @app.route("/select-role")
 def select_role():
-    """Landing page: pick Admin / Lecturer / Student before signing in.
-    Each card links to the same login form, but with a role hint so the
-    right 'forgot password' guidance shows (admin gets the self-service
-    recovery link; lecturer/student are told to contact their admin,
-    since only an admin can reset their password from User Accounts /
-    the student's detail page)."""
     if "role" in session:
         return redirect(url_for("index"))
     return render_template("select_role.html")
 
 
-# ----------------------------------------------------------------------
-# Admin dashboard (1.9.4 role-based interface / 4.8.2)
-# ----------------------------------------------------------------------
 @app.route("/admin")
 @role_required("admin")
 def admin_dashboard():
@@ -304,12 +454,7 @@ def lecturer_dashboard():
     return render_template("lecturer_dashboard.html", courses=courses)
 
 
-# ----------------------------------------------------------------------
-# Internal messaging — admin/lecturer -> lecturer/student, no email
-# server needed. Everything stays inside the app.
-# ----------------------------------------------------------------------
 def _unread_message_count():
-    """Used by the sidebar badge for lecturers/students."""
     role = session.get("role")
     if role == "lecturer":
         rid = session.get("user_id")
@@ -374,7 +519,7 @@ def messages_compose():
             db.close()
             return redirect(url_for("messages_compose"))
 
-        recipients = []  # list of (type, id)
+        recipients = []
         target_desc = ""
 
         if role == "admin":
@@ -402,7 +547,7 @@ def messages_compose():
                 target_desc = "All students"
             else:
                 abort(400)
-        else:  # lecturer
+        else:
             if target_type == "student":
                 sid = request.form.get("student_id", type=int)
                 owns = db.execute(
@@ -413,7 +558,6 @@ def messages_compose():
                     (sid, sender_id),
                 ).fetchone()
                 if not owns:
-                    # Lecturers may only message students enrolled in their own courses.
                     abort(403)
                 recipients = [("student", sid)]
                 target_desc = f"Student: {owns['full_name']} ({owns['reg_number']})"
@@ -521,9 +665,6 @@ def messages_mark_read(recipient_row_id):
     return redirect(url_for("messages_inbox"))
 
 
-# ----------------------------------------------------------------------
-# Student management (Functional Requirement — Table 1 / Fig 12-14)
-# ----------------------------------------------------------------------
 @app.route("/students")
 @role_required("admin")
 def students_list():
@@ -545,9 +686,6 @@ def students_list():
 @app.route("/students/id-cards")
 @role_required("admin")
 def students_id_cards():
-    """Batch-printable PDF of ID cards (real Code128 barcodes) for every
-    active student, or a filtered subset via ?q=... — a backup for
-    students without a physical card, and a nice printable artifact."""
     db = get_db()
     q = request.args.get("q", "").strip()
     if q:
@@ -574,18 +712,10 @@ def students_id_cards():
 
 
 def _generate_barcode_value(reg_number: str) -> str:
-    # Deterministic, unique, Code128-safe payload — generated entirely in software.
     return f"STU-{reg_number.strip().upper()}"
 
 
 def _generate_reg_number():
-    """
-    Auto-generates the next unique registration number, e.g. STU2026-0001,
-    STU2026-0002, ... A persistent counter (stored in the settings table,
-    same mechanism as institution_name/late_threshold) guarantees numbers
-    never repeat even if a student is later deleted or deactivated —
-    unlike COUNT(*)+1, which would collide after a deletion.
-    """
     from datetime import date
     year = date.today().year
     seq_key = f"next_student_seq_{year}"
@@ -607,9 +737,6 @@ def student_add():
             return render_template("student_add.html")
 
         db = get_db()
-        # Auto-generate reg number + barcode; retry a couple of times in
-        # the unlikely event of a collision (e.g. two admins registering
-        # at the exact same moment) rather than failing outright.
         for _attempt in range(3):
             reg_number = _generate_reg_number()
             barcode_value = _generate_barcode_value(reg_number)
@@ -694,8 +821,6 @@ def student_toggle_status(student_id):
 @app.route("/students/<int:student_id>/reset_password", methods=["POST"])
 @role_required("admin")
 def student_reset_password(student_id):
-    """Reset a student's password back to their registration number — the
-    same default used when their account was first created."""
     db = get_db()
     student = db.execute("SELECT reg_number, full_name FROM students WHERE id=?", (student_id,)).fetchone()
     if not student:
@@ -717,10 +842,6 @@ def student_reset_password(student_id):
     return redirect(url_for("student_detail", student_id=student_id))
 
 
-# ----------------------------------------------------------------------
-# Student self-service dashboard (own attendance history, per-course %,
-# low-attendance flag). Students log in with reg_number as username.
-# ----------------------------------------------------------------------
 @app.route("/student")
 @role_required("student")
 def student_dashboard():
@@ -732,8 +853,6 @@ def student_dashboard():
 
     low_attendance_threshold = float(get_setting("low_attendance_percent", "75"))
 
-    # Per-course attendance %: sessions held vs. sessions the student was
-    # marked present/late for, for each enrolled course.
     per_course = db.execute(
         """SELECT c.id, c.code, c.name,
                   COUNT(DISTINCT s.id) AS sessions_held,
@@ -777,9 +896,6 @@ def student_dashboard():
     )
 
 
-# ----------------------------------------------------------------------
-# Profile / change password — available to all three roles.
-# ----------------------------------------------------------------------
 @app.route("/profile", methods=["GET", "POST"])
 @role_required("admin", "lecturer", "student")
 def profile():
@@ -816,9 +932,6 @@ def profile():
     return render_template("profile.html", actor=actor, role=role)
 
 
-# ----------------------------------------------------------------------
-# Course & Session management
-# ----------------------------------------------------------------------
 @app.route("/courses", methods=["GET", "POST"])
 @role_required("admin")
 def courses_list():
@@ -873,13 +986,6 @@ def course_sessions(course_id):
     return render_template("sessions.html", course=course, sessions=sessions_rows)
 
 
-# ----------------------------------------------------------------------
-# ATTENDANCE CAPTURE — the core replacement for the hardware scanner.
-# Two software-only input methods, both hitting the same endpoint:
-#   1. Camera scan  -> JS (ZXing, in take_attendance.html) decodes the
-#      barcode from the webcam feed client-side and POSTs the value here.
-#   2. Manual entry -> the barcode/reg number is typed and submitted.
-# ----------------------------------------------------------------------
 @app.route("/attendance/take/<int:session_id>", methods=["GET"])
 @role_required("admin", "lecturer")
 def take_attendance(session_id):
@@ -905,16 +1011,6 @@ def take_attendance(session_id):
 
 
 def _process_attendance_scan(barcode_value, session_id, method):
-    """
-    Shared by /api/attendance/scan (camera_scan text / manual_entry) and
-    /api/attendance/scan_photo (server-side photo decode). Implements the
-    algorithm from the document (3.4 Data Analysis):
-      1. Extract/decode barcode -> already done by the caller.
-      2. Validate against the student database.
-      3. Check duplicate-scan for this session.
-      4. Record attendance with timestamp; give clear success/error feedback.
-    Returns a (payload_dict, http_status) tuple ready for jsonify().
-    """
     barcode_value = (barcode_value or "").strip()
     if not barcode_value or not session_id:
         return dict(ok=False, message="Missing barcode or session."), 400
@@ -950,7 +1046,6 @@ def _process_attendance_scan(barcode_value, session_id, method):
         ), 200
 
     now = now_iso()
-    # Simple "late" rule: after the session's start_time by more than 15 minutes -> late
     status = "present"
     try:
         start_dt = datetime.strptime(f"{sess_row['session_date']} {sess_row['start_time']}", "%Y-%m-%d %H:%M")
@@ -980,14 +1075,10 @@ def _process_attendance_scan(barcode_value, session_id, method):
 @app.route("/api/attendance/scan", methods=["POST"])
 @role_required("admin", "lecturer")
 def api_attendance_scan():
-    """
-    Endpoint for the live-camera JS decode (text already extracted client
-    side by ZXing) and for manual keyboard entry.
-    """
     data = request.get_json(force=True) if request.is_json else request.form
     barcode_value = (data.get("barcode_value") or "").strip()
     session_id = data.get("session_id")
-    method = data.get("method", "manual_entry")  # 'camera_scan' or 'manual_entry'
+    method = data.get("method", "manual_entry")
     payload, code = _process_attendance_scan(barcode_value, session_id, method)
     return jsonify(**payload), code
 
@@ -995,16 +1086,6 @@ def api_attendance_scan():
 @app.route("/api/attendance/scan_photo", methods=["POST"])
 @role_required("admin", "lecturer")
 def api_attendance_scan_photo():
-    """
-    Server-side alternative to the browser's ZXing still-image decode.
-    The "Scan with Upload" button in take_attendance.html sends the raw
-    image file here (multipart/form-data); pyzbar (a proven, robust
-    Code128 decoder — it ships its own zbar binary per platform via pip,
-    including Windows, so no separate system install is needed) decodes
-    it server-side instead of relying on the flakier in-browser decoder,
-    then the result is fed through the same validate/record pipeline as
-    every other scan method.
-    """
     session_id = request.form.get("session_id")
     if "photo" not in request.files:
         return jsonify(ok=False, message="No photo uploaded."), 400
@@ -1033,10 +1114,6 @@ def api_attendance_scan_photo():
         ), 200
 
     barcode_value = results[0].text
-    # NOTE: schema.sql's CHECK constraint on attendance_records.method only
-    # allows 'camera_scan' / 'manual_entry' / 'manual_adjustment'. Reusing
-    # 'camera_scan' here avoids a schema migration that would require
-    # rebuilding (and risk wiping) an existing instance/attendance.db.
     payload, code = _process_attendance_scan(barcode_value, session_id, "camera_scan")
     return jsonify(**payload), code
 
@@ -1044,7 +1121,6 @@ def api_attendance_scan_photo():
 @app.route("/attendance/<int:record_id>/adjust", methods=["POST"])
 @role_required("admin", "lecturer")
 def attendance_manual_adjust(record_id):
-    """Manual adjustment with a MANDATORY reason (per document 4.8.3), fully audited."""
     new_status = request.form["status"]
     reason = request.form.get("reason", "").strip()
     if not reason:
@@ -1080,9 +1156,6 @@ def attendance_all():
     return render_template("attendance_list.html", rows=rows)
 
 
-# ----------------------------------------------------------------------
-# Reporting (1.9.3 Easy reporting features / 4.8.4 Reporting Interface)
-# ----------------------------------------------------------------------
 @app.route("/reports", methods=["GET"])
 @role_required("admin", "lecturer")
 def reports():
@@ -1148,9 +1221,6 @@ def reports_generate():
         )
 
 
-# ----------------------------------------------------------------------
-# Admin: manage lecturer accounts
-# ----------------------------------------------------------------------
 @app.route("/users", methods=["GET", "POST"])
 @role_required("admin")
 def users_list():
@@ -1190,10 +1260,6 @@ def user_toggle(user_id):
 @app.route("/users/<int:user_id>/reset_password", methods=["POST"])
 @role_required("admin")
 def user_reset_password(user_id):
-    """Admin-mediated password reset (no email server required). Generates
-    a random temporary password, shown once, that the user must use to log
-    in — they can then change it themselves from Profile."""
-    import secrets
     db = get_db()
     target = db.execute("SELECT username, full_name FROM users WHERE id=?", (user_id,)).fetchone()
     if not target:
@@ -1283,9 +1349,6 @@ def user_detail(user_id):
     )
 
 
-# ----------------------------------------------------------------------
-# Audit trail viewer (admin)
-# ----------------------------------------------------------------------
 @app.route("/audit")
 @role_required("admin")
 def audit_log_view():
@@ -1303,9 +1366,6 @@ def audit_log_view():
     return render_template("audit_log.html", rows=rows, actions=actions, action_filter=action_filter)
 
 
-# ----------------------------------------------------------------------
-# System settings (admin)
-# ----------------------------------------------------------------------
 @app.route("/settings", methods=["GET", "POST"])
 @role_required("admin")
 def settings_page():
@@ -1320,11 +1380,6 @@ def settings_page():
     return render_template("settings.html", settings=get_all_settings())
 
 
-# ----------------------------------------------------------------------
-# Backup (admin) — download the live SQLite database file. Simplest
-# reliable backup for a single-file database: copy it out, timestamp the
-# filename, and stream it to the browser.
-# ----------------------------------------------------------------------
 @app.route("/backup")
 @role_required("admin")
 def backup_page():
@@ -1351,9 +1406,6 @@ def backup_download():
     )
 
 
-# ----------------------------------------------------------------------
-# CLI bootstrap
-# ----------------------------------------------------------------------
 @app.cli.command("init-db")
 def init_db_command():
     init_db(reset=True)
@@ -1363,7 +1415,6 @@ def init_db_command():
 if __name__ == "__main__":
     first_time = init_db(reset=False)
     if first_time:
-        # Seed a default admin so the system is usable immediately.
         db = get_db()
         db.execute(
             """INSERT INTO users (username, password_hash, full_name, email, role)
