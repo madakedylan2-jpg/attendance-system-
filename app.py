@@ -41,46 +41,11 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from database import (
     get_db, init_db, now_iso, DB_PATH,
     get_setting, get_all_settings, set_setting,
-    ensure_messaging_tables, ensure_reset_requests_table,
 )
 from reports import build_pdf_report, build_excel_report, build_id_cards_pdf
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("ATTENDANCE_SECRET_KEY", "dev-secret-change-me")
-
-# Safety-net migration: makes sure newer tables (messaging, password reset
-# requests) exist even when the app is started by a WSGI server like
-# gunicorn, where the `if __name__ == "__main__":` block below never runs.
-# CREATE TABLE IF NOT EXISTS makes this a no-op once the table is there.
-# Safety-net migration: makes sure newer tables (messaging, password reset
-# requests) exist even when the app is started by a WSGI server like
-# gunicorn, where the `if __name__ == "__main__":` block below never runs.
-# CREATE TABLE IF NOT EXISTS makes this a no-op once the table is there.
-# Wrapped in try/except so a startup hiccup here (e.g. a brief database
-# lock while another worker process does the same thing) can NEVER take
-# the whole site down — worst case, this one-time step silently retries
-# on the next request instead of crashing every page.
-try:
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    _migration_conn = get_db()
-    ensure_messaging_tables(_migration_conn)
-    ensure_reset_requests_table(_migration_conn)
-    _migration_conn.close()
-except Exception as _migration_error:
-    print(f"[startup migration] skipped, will retry on first use: {_migration_error}")
-
-
-def _ensure_reset_table_ready():
-    """Cheap per-request safety check: if the startup migration above ever
-    got skipped (e.g. a transient lock), this quietly creates the table on
-    first use instead of letting the page crash. CREATE TABLE IF NOT EXISTS
-    is a no-op once the table already exists, so this costs almost nothing."""
-    try:
-        _conn = get_db()
-        ensure_reset_requests_table(_conn)
-        _conn.close()
-    except Exception as _e:
-        print(f"[lazy migration] {_e}")
 
 
 # ----------------------------------------------------------------------
@@ -137,18 +102,6 @@ def inject_user():
         },
         "institution_name": get_setting("institution_name", "Attendance Ledger"),
     }
-
-
-@app.context_processor
-def inject_pending_reset_count():
-    if session.get("role") != "admin":
-        return {}
-    db = get_db()
-    count = db.execute(
-        "SELECT COUNT(*) AS c FROM password_reset_requests WHERE status='pending'"
-    ).fetchone()["c"]
-    db.close()
-    return {"pending_reset_count": count}
 
 
 # ----------------------------------------------------------------------
@@ -243,96 +196,6 @@ def admin_recovery():
         flash(f"Password for '{username}' has been reset. You can now log in.", "success")
         return redirect(url_for("login"))
     return render_template("admin_recovery.html")
-
-
-@app.route("/request-password-reset", methods=["GET", "POST"])
-def request_password_reset():
-    """
-    Real, clickable password-reset request for students and lecturers
-    (admin has their own self-service recovery page instead). Submitting
-    this form doesn't reset anything by itself — it logs a request that
-    shows up for admin on the Password Reset Requests screen, where they
-    can act on it with the Reset Password button already built for
-    Users/Students. No email server needed, still fully admin-mediated.
-    """
-    role_hint = request.args.get("role", "").strip()
-    if role_hint not in ("student", "lecturer"):
-        role_hint = request.form.get("role_hint", "").strip()
-    _ensure_reset_table_ready()
-    if request.method == "POST":
-        username = request.form.get("username", "").strip()
-        message = request.form.get("message", "").strip()
-        role_hint = request.form.get("role_hint", role_hint).strip()
-        if role_hint not in ("student", "lecturer"):
-            flash("Please choose whether you're a student or a lecturer.", "error")
-            return render_template("request_password_reset.html", role_hint=role_hint)
-        if not username:
-            flash("Please enter your username / registration number.", "error")
-            return render_template("request_password_reset.html", role_hint=role_hint)
-
-        db = get_db()
-        requester_id = None
-        full_name = None
-        if role_hint == "student":
-            row = db.execute(
-                "SELECT id, full_name FROM students WHERE LOWER(TRIM(reg_number)) = LOWER(TRIM(?))", (username,)
-            ).fetchone()
-        else:
-            row = db.execute(
-                "SELECT id, full_name FROM users WHERE LOWER(TRIM(username)) = LOWER(TRIM(?)) AND role = 'lecturer'", (username,)
-            ).fetchone()
-        if row:
-            requester_id = row["id"]
-            full_name = row["full_name"]
-        db.execute(
-            """INSERT INTO password_reset_requests
-               (requester_type, requester_id, username, full_name, message)
-               VALUES (?, ?, ?, ?, ?)""",
-            (role_hint, requester_id, username, full_name, message or None),
-        )
-        db.commit()
-        db.close()
-        flash(
-            "Your request has been sent to the administrator. You'll be able to "
-            "log in once your password is reset — check back or wait to be contacted.",
-            "success",
-        )
-        return redirect(url_for("login", role=role_hint))
-    return render_template("request_password_reset.html", role_hint=role_hint)
-
-
-@app.route("/check-reset-status", methods=["GET", "POST"])
-def check_reset_status():
-    """
-    Lets a student/lecturer check whether their reset request has been
-    actioned, using only their reg number/username — WITHOUT ever
-    displaying the actual new password on this page. Reg numbers and
-    usernames aren't secret (they're printed on ID cards), so showing a
-    real password to anyone who types one in would let a stranger take
-    over someone else's account. Status only; the password itself still
-    has to be handed over by the administrator directly.
-    """
-    role_hint = request.args.get("role", "").strip()
-    result = None
-    if request.method == "POST":
-        username = request.form.get("username", "").strip()
-        role_hint = request.form.get("role_hint", role_hint).strip()
-        _ensure_reset_table_ready()
-        db = get_db()
-        row = db.execute(
-            """SELECT * FROM password_reset_requests
-               WHERE requester_type = ? AND LOWER(TRIM(username)) = LOWER(TRIM(?))
-               ORDER BY created_at DESC LIMIT 1""",
-            (role_hint, username),
-        ).fetchone()
-        db.close()
-        if not row:
-            result = {"found": False}
-        elif row["status"] == "resolved":
-            result = {"found": True, "status": "resolved", "resolved_at": row["resolved_at"]}
-        else:
-            result = {"found": True, "status": "pending", "created_at": row["created_at"]}
-    return render_template("check_reset_status.html", role_hint=role_hint, result=result)
 
 
 @app.route("/logout")
@@ -715,109 +578,56 @@ def _generate_barcode_value(reg_number: str) -> str:
     return f"STU-{reg_number.strip().upper()}"
 
 
-@app.route("/students/bulk-import", methods=["GET", "POST"])
-@role_required("admin")
-def students_bulk_import():
+def _generate_reg_number():
     """
-    Upload a CSV (columns: reg_number, full_name, and optionally email,
-    department) to register many students in one go instead of one at a
-    time — the same convenience real school systems (SIMS, PowerSchool)
-    give admins for a new intake or class. Each row gets a barcode and a
-    default portal password the same way the single Register student
-    form does. Bad rows are skipped and reported, not fatal.
+    Auto-generates the next unique registration number, e.g. STU2026-0001,
+    STU2026-0002, ... A persistent counter (stored in the settings table,
+    same mechanism as institution_name/late_threshold) guarantees numbers
+    never repeat even if a student is later deleted or deactivated —
+    unlike COUNT(*)+1, which would collide after a deletion.
     """
-    if request.method == "POST":
-        file = request.files.get("csv_file")
-        if not file or file.filename == "":
-            flash("Please choose a CSV file to upload.", "error")
-            return redirect(url_for("students_bulk_import"))
-        try:
-            content = file.stream.read().decode("utf-8-sig")
-        except UnicodeDecodeError:
-            flash("Could not read that file — please save it as a plain CSV (UTF-8) and try again.", "error")
-            return redirect(url_for("students_bulk_import"))
-
-        import csv as _csv
-        import io as _io
-        reader = _csv.DictReader(_io.StringIO(content))
-        fieldnames = [ (f or "").strip().lower() for f in (reader.fieldnames or []) ]
-        if "reg_number" not in fieldnames or "full_name" not in fieldnames:
-            flash("CSV must have at least 'reg_number' and 'full_name' columns.", "error")
-            return redirect(url_for("students_bulk_import"))
-
-        db = get_db()
-        created, skipped = 0, []
-        for i, raw_row in enumerate(reader, start=2):  # row 1 is the header
-            row = { (k or "").strip().lower(): (v or "").strip() for k, v in raw_row.items() }
-            reg_number = row.get("reg_number", "")
-            full_name = row.get("full_name", "")
-            if not reg_number or not full_name:
-                skipped.append(f"Row {i}: missing reg_number or full_name")
-                continue
-            email = row.get("email", "")
-            department = row.get("department", "")
-            barcode_value = _generate_barcode_value(reg_number)
-            try:
-                db.execute(
-                    """INSERT INTO students (reg_number, full_name, email, department, barcode_value, password_hash)
-                       VALUES (?,?,?,?,?,?)""",
-                    (reg_number, full_name, email, department, barcode_value, generate_password_hash(reg_number)),
-                )
-                created += 1
-            except Exception as e:
-                skipped.append(f"Row {i} ({reg_number}): {e}")
-        db.commit()
-        db.close()
-        log_action("students_bulk_import", f"created={created} skipped={len(skipped)}")
-
-        if created:
-            flash(f"Imported {created} student(s) successfully.", "success")
-        if skipped:
-            preview = "; ".join(skipped[:5])
-            more = f" (+{len(skipped)-5} more)" if len(skipped) > 5 else ""
-            flash(f"Skipped {len(skipped)} row(s): {preview}{more}", "error")
-        return redirect(url_for("students_list"))
-
-    return render_template("students_bulk_import.html")
-
-
-@app.route("/students/bulk-import/template")
-@role_required("admin")
-def students_bulk_import_template():
-    """Downloadable starter CSV so admins know the exact column names to use."""
-    csv_content = "reg_number,full_name,email,department\nR2024001,Jane Doe,jane@example.com,Computer Science\n"
-    return app.response_class(
-        csv_content,
-        mimetype="text/csv",
-        headers={"Content-Disposition": "attachment; filename=student_import_template.csv"},
-    )
+    from datetime import date
+    year = date.today().year
+    seq_key = f"next_student_seq_{year}"
+    seq = int(get_setting(seq_key, "1"))
+    reg_number = f"STU{year}-{seq:04d}"
+    set_setting(seq_key, str(seq + 1))
+    return reg_number
 
 
 @app.route("/students/add", methods=["GET", "POST"])
 @role_required("admin")
 def student_add():
     if request.method == "POST":
-        reg_number = request.form["reg_number"].strip()
         full_name = request.form["full_name"].strip()
         email = request.form.get("email", "").strip()
         department = request.form.get("department", "").strip()
-        barcode_value = _generate_barcode_value(reg_number)
-        # Default student portal password is their own reg number — they're
-        # prompted to change it from Profile after first login.
-        default_password_hash = generate_password_hash(reg_number.strip())
+        if not full_name:
+            flash("Full name is required.", "error")
+            return render_template("student_add.html")
+
         db = get_db()
-        try:
-            db.execute(
-                """INSERT INTO students (reg_number, full_name, email, department, barcode_value, password_hash)
-                   VALUES (?,?,?,?,?,?)""",
-                (reg_number, full_name, email, department, barcode_value, default_password_hash),
-            )
-            db.commit()
-            flash(f"Student '{full_name}' created with barcode {barcode_value}. "
-                  f"Portal login: {reg_number} / {reg_number} (they should change this).", "success")
-            log_action("student_add", reg_number)
-        except Exception as e:
-            flash(f"Could not create student: {e}", "error")
+        # Auto-generate reg number + barcode; retry a couple of times in
+        # the unlikely event of a collision (e.g. two admins registering
+        # at the exact same moment) rather than failing outright.
+        for _attempt in range(3):
+            reg_number = _generate_reg_number()
+            barcode_value = _generate_barcode_value(reg_number)
+            default_password_hash = generate_password_hash(reg_number.strip())
+            try:
+                db.execute(
+                    """INSERT INTO students (reg_number, full_name, email, department, barcode_value, password_hash)
+                       VALUES (?,?,?,?,?,?)""",
+                    (reg_number, full_name, email, department, barcode_value, default_password_hash),
+                )
+                db.commit()
+                flash(f"Student '{full_name}' registered as {reg_number}, with barcode {barcode_value}. "
+                      f"Portal login: {reg_number} / {reg_number} (they should change this).", "success")
+                log_action("student_add", reg_number)
+                break
+            except Exception as e:
+                if _attempt == 2:
+                    flash(f"Could not create student: {e}", "error")
         db.close()
         return redirect(url_for("students_list"))
     return render_template("student_add.html")
@@ -959,33 +769,10 @@ def student_dashboard():
            WHERE ar.student_id=? ORDER BY ar.timestamp DESC LIMIT 20""",
         (student_id,),
     ).fetchall()
-
-    # Attendance streak: consecutive sessions (across all courses, in
-    # chronological order) most recently attended without a gap/absence.
-    # Purely a display touch — no new table needed, computed from records
-    # that already exist.
-    all_sessions_ordered = db.execute(
-        """SELECT s.id AS session_id,
-                  MAX(CASE WHEN ar.student_id = ? AND ar.status IN ('present','late') THEN 1 ELSE 0 END) AS attended
-           FROM sessions s
-           JOIN enrollments e ON e.course_id = s.course_id AND e.student_id = ? AND e.status='enrolled'
-           LEFT JOIN attendance_records ar ON ar.session_id = s.id AND ar.student_id = ?
-           WHERE s.session_date <= date('now')
-           GROUP BY s.id
-           ORDER BY s.session_date DESC, s.start_time DESC""",
-        (student_id, student_id, student_id),
-    ).fetchall()
-    streak = 0
-    for row in all_sessions_ordered:
-        if row["attended"]:
-            streak += 1
-        else:
-            break
-
     db.close()
     return render_template(
         "student_dashboard.html", student=student, course_stats=course_stats,
-        overall_pct=overall_pct, history=history, streak=streak,
+        overall_pct=overall_pct, history=history,
         low_attendance_threshold=low_attendance_threshold,
     )
 
@@ -1084,56 +871,6 @@ def course_sessions(course_id):
     ).fetchall()
     db.close()
     return render_template("sessions.html", course=course, sessions=sessions_rows)
-
-
-@app.route("/courses/<int:course_id>/summary")
-@role_required("admin", "lecturer")
-def course_attendance_summary(course_id):
-    """
-    Printable, per-course attendance summary — one row per session showing
-    who attended and the running percentage. Lecturers can only view their
-    own courses; kept behind login (unlike a public link) since attendance
-    data is student-identifiable and shouldn't be reachable by a guessed URL.
-    """
-    db = get_db()
-    course = db.execute(
-        "SELECT c.*, u.full_name AS lecturer_name FROM courses c LEFT JOIN users u ON u.id=c.lecturer_id WHERE c.id=?",
-        (course_id,),
-    ).fetchone()
-    if not course:
-        abort(404)
-    if session.get("role") == "lecturer" and course["lecturer_id"] != session["user_id"]:
-        abort(403)
-
-    sessions_rows = db.execute(
-        """SELECT s.id, s.session_date, s.start_time,
-                  COUNT(DISTINCT e.student_id) AS enrolled,
-                  COUNT(DISTINCT CASE WHEN ar.status IN ('present','late') THEN ar.student_id END) AS attended
-           FROM sessions s
-           LEFT JOIN enrollments e ON e.course_id = s.course_id AND e.status='enrolled'
-           LEFT JOIN attendance_records ar ON ar.session_id = s.id
-           WHERE s.course_id = ?
-           GROUP BY s.id ORDER BY s.session_date, s.start_time""",
-        (course_id,),
-    ).fetchall()
-
-    per_student = db.execute(
-        """SELECT st.id, st.full_name, st.reg_number,
-                  COUNT(DISTINCT s.id) AS total_sessions,
-                  COUNT(DISTINCT CASE WHEN ar.status IN ('present','late') THEN ar.session_id END) AS attended,
-                  ROUND(100.0 * COUNT(DISTINCT CASE WHEN ar.status IN ('present','late') THEN ar.session_id END)
-                        / NULLIF(COUNT(DISTINCT s.id), 0), 1) AS pct
-           FROM students st
-           JOIN enrollments e ON e.student_id = st.id AND e.course_id = ? AND e.status='enrolled'
-           LEFT JOIN sessions s ON s.course_id = ?
-           LEFT JOIN attendance_records ar ON ar.student_id = st.id AND ar.session_id = s.id
-           GROUP BY st.id ORDER BY st.full_name""",
-        (course_id, course_id),
-    ).fetchall()
-    db.close()
-    return render_template(
-        "course_summary.html", course=course, sessions=sessions_rows, per_student=per_student
-    )
 
 
 # ----------------------------------------------------------------------
@@ -1549,41 +1286,6 @@ def user_detail(user_id):
 # ----------------------------------------------------------------------
 # Audit trail viewer (admin)
 # ----------------------------------------------------------------------
-@app.route("/password-reset-requests")
-@role_required("admin")
-def password_reset_requests_view():
-    _ensure_reset_table_ready()
-    db = get_db()
-    pending = db.execute(
-        "SELECT * FROM password_reset_requests WHERE status='pending' ORDER BY created_at ASC"
-    ).fetchall()
-    resolved = db.execute(
-        "SELECT * FROM password_reset_requests WHERE status='resolved' ORDER BY resolved_at DESC LIMIT 50"
-    ).fetchall()
-    db.close()
-    return render_template("password_reset_requests.html", pending=pending, resolved=resolved)
-
-
-@app.route("/password-reset-requests/<int:request_id>/resolve", methods=["POST"])
-@role_required("admin")
-def password_reset_request_resolve(request_id):
-    _ensure_reset_table_ready()
-    db = get_db()
-    req = db.execute("SELECT * FROM password_reset_requests WHERE id=?", (request_id,)).fetchone()
-    if not req:
-        db.close()
-        abort(404)
-    db.execute(
-        "UPDATE password_reset_requests SET status='resolved', resolved_at=datetime('now'), resolved_by=? WHERE id=?",
-        (session.get("full_name"), request_id),
-    )
-    db.commit()
-    db.close()
-    log_action("password_reset_request_resolved", f"{req['requester_type']}={req['username']}")
-    flash("Marked as resolved.", "success")
-    return redirect(url_for("password_reset_requests_view"))
-
-
 @app.route("/audit")
 @role_required("admin")
 def audit_log_view():
