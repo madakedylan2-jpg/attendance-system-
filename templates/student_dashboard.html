@@ -6,6 +6,11 @@
   <h1>{{ student.full_name }}</h1>
   <span class="mono" style="color:#8a90a3; font-size:0.82rem;">{{ student.reg_number }}</span>
 </div>
+{% if streak and streak >= 5 %}
+  <div class="badge" style="background:#E8A33D; color:#1F2937; display:inline-block; padding:4px 12px; border-radius:12px; font-weight:600; margin-bottom:10px;">
+    🔥 {{ streak }}-session attendance streak{{ '!' if streak >= 10 else '' }}
+  </div>
+{% endif %}
 <div class="barcode-rule"></div>
 
 <div class="grid cols-3">

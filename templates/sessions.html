@@ -3,6 +3,7 @@
 {% block content %}
 <span class="eyebrow">{{ course.code }}</span>
 <h1>{{ course.name }} — Sessions</h1>
+<a href="{{ url_for('course_attendance_summary', course_id=course.id) }}" class="btn" style="margin-bottom:10px;">🖨 Printable attendance summary</a>
 <div class="barcode-rule"></div>
 
 <div class="grid cols-2">
