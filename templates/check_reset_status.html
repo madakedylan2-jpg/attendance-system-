@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Check reset status{% endblock %}
+{% block content_bare %}
+<div class="login-shell">
+  <div class="login-card">
+    <div class="brand">TELONE CENTRE FOR LEARNING TRACKING SYSTEM</div>
+    <p style="margin:6px 0 0; font-weight:600;">Check your reset request status</p>
+    <div class="barcode-rule" style="height:6px;"></div>
+
+    {% if result %}
+      {% if not result.found %}
+        <div class="flash error">
+          <span>No reset request found for that username. Double-check what you typed, or submit a new request.</span>
+        </div>
+      {% elif result.status == 'pending' %}
+        <div class="flash" style="background:#fff3cd; color:#664d03; border-color:#ffe69c;">
+          <span>Your request is still pending — submitted {{ result.created_at }}. Please check back later or speak to your administrator.</span>
+        </div>
+      {% elif result.status == 'resolved' %}
+        <div class="flash success">
+          <span>Your password was reset on {{ result.resolved_at }}. For security, the new password isn't shown here — please collect it directly from your administrator.</span>
+        </div>
+      {% endif %}
+    {% endif %}
+
+    <form method="post">
+      <label for="role_hint">I am a</label>
+      <select id="role_hint" name="role_hint" required>
+        <option value="student" {{ 'selected' if role_hint == 'student' }}>Student</option>
+        <option value="lecturer" {{ 'selected' if role_hint == 'lecturer' }}>Lecturer</option>
+      </select>
+
+      <label for="username" style="margin-top:12px;">Registration number / Username</label>
+      <input type="text" id="username" name="username" required autofocus>
+
+      <button class="btn accent" type="submit" style="width:100%; justify-content:center; margin-top:18px;">Check status</button>
+    </form>
+
+    <div class="login-hint" style="margin-top:14px;">
+      <a href="{{ url_for('login', role=role_hint) }}">← Back to sign in</a>
+    </div>
+  </div>
+</div>
+{% endblock %}
