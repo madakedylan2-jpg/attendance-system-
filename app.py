@@ -275,11 +275,11 @@ def request_password_reset():
         full_name = None
         if role_hint == "student":
             row = db.execute(
-                "SELECT id, full_name FROM students WHERE reg_number = ?", (username,)
+                "SELECT id, full_name FROM students WHERE LOWER(TRIM(reg_number)) = LOWER(TRIM(?))", (username,)
             ).fetchone()
         else:
             row = db.execute(
-                "SELECT id, full_name FROM users WHERE username = ? AND role = 'lecturer'", (username,)
+                "SELECT id, full_name FROM users WHERE LOWER(TRIM(username)) = LOWER(TRIM(?)) AND role = 'lecturer'", (username,)
             ).fetchone()
         if row:
             requester_id = row["id"]
@@ -299,6 +299,40 @@ def request_password_reset():
         )
         return redirect(url_for("login", role=role_hint))
     return render_template("request_password_reset.html", role_hint=role_hint)
+
+
+@app.route("/check-reset-status", methods=["GET", "POST"])
+def check_reset_status():
+    """
+    Lets a student/lecturer check whether their reset request has been
+    actioned, using only their reg number/username — WITHOUT ever
+    displaying the actual new password on this page. Reg numbers and
+    usernames aren't secret (they're printed on ID cards), so showing a
+    real password to anyone who types one in would let a stranger take
+    over someone else's account. Status only; the password itself still
+    has to be handed over by the administrator directly.
+    """
+    role_hint = request.args.get("role", "").strip()
+    result = None
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        role_hint = request.form.get("role_hint", role_hint).strip()
+        _ensure_reset_table_ready()
+        db = get_db()
+        row = db.execute(
+            """SELECT * FROM password_reset_requests
+               WHERE requester_type = ? AND LOWER(TRIM(username)) = LOWER(TRIM(?))
+               ORDER BY created_at DESC LIMIT 1""",
+            (role_hint, username),
+        ).fetchone()
+        db.close()
+        if not row:
+            result = {"found": False}
+        elif row["status"] == "resolved":
+            result = {"found": True, "status": "resolved", "resolved_at": row["resolved_at"]}
+        else:
+            result = {"found": True, "status": "pending", "created_at": row["created_at"]}
+    return render_template("check_reset_status.html", role_hint=role_hint, result=result)
 
 
 @app.route("/logout")
