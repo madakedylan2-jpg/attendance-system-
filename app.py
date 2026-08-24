@@ -715,6 +715,84 @@ def _generate_barcode_value(reg_number: str) -> str:
     return f"STU-{reg_number.strip().upper()}"
 
 
+@app.route("/students/bulk-import", methods=["GET", "POST"])
+@role_required("admin")
+def students_bulk_import():
+    """
+    Upload a CSV (columns: reg_number, full_name, and optionally email,
+    department) to register many students in one go instead of one at a
+    time — the same convenience real school systems (SIMS, PowerSchool)
+    give admins for a new intake or class. Each row gets a barcode and a
+    default portal password the same way the single Register student
+    form does. Bad rows are skipped and reported, not fatal.
+    """
+    if request.method == "POST":
+        file = request.files.get("csv_file")
+        if not file or file.filename == "":
+            flash("Please choose a CSV file to upload.", "error")
+            return redirect(url_for("students_bulk_import"))
+        try:
+            content = file.stream.read().decode("utf-8-sig")
+        except UnicodeDecodeError:
+            flash("Could not read that file — please save it as a plain CSV (UTF-8) and try again.", "error")
+            return redirect(url_for("students_bulk_import"))
+
+        import csv as _csv
+        import io as _io
+        reader = _csv.DictReader(_io.StringIO(content))
+        fieldnames = [ (f or "").strip().lower() for f in (reader.fieldnames or []) ]
+        if "reg_number" not in fieldnames or "full_name" not in fieldnames:
+            flash("CSV must have at least 'reg_number' and 'full_name' columns.", "error")
+            return redirect(url_for("students_bulk_import"))
+
+        db = get_db()
+        created, skipped = 0, []
+        for i, raw_row in enumerate(reader, start=2):  # row 1 is the header
+            row = { (k or "").strip().lower(): (v or "").strip() for k, v in raw_row.items() }
+            reg_number = row.get("reg_number", "")
+            full_name = row.get("full_name", "")
+            if not reg_number or not full_name:
+                skipped.append(f"Row {i}: missing reg_number or full_name")
+                continue
+            email = row.get("email", "")
+            department = row.get("department", "")
+            barcode_value = _generate_barcode_value(reg_number)
+            try:
+                db.execute(
+                    """INSERT INTO students (reg_number, full_name, email, department, barcode_value, password_hash)
+                       VALUES (?,?,?,?,?,?)""",
+                    (reg_number, full_name, email, department, barcode_value, generate_password_hash(reg_number)),
+                )
+                created += 1
+            except Exception as e:
+                skipped.append(f"Row {i} ({reg_number}): {e}")
+        db.commit()
+        db.close()
+        log_action("students_bulk_import", f"created={created} skipped={len(skipped)}")
+
+        if created:
+            flash(f"Imported {created} student(s) successfully.", "success")
+        if skipped:
+            preview = "; ".join(skipped[:5])
+            more = f" (+{len(skipped)-5} more)" if len(skipped) > 5 else ""
+            flash(f"Skipped {len(skipped)} row(s): {preview}{more}", "error")
+        return redirect(url_for("students_list"))
+
+    return render_template("students_bulk_import.html")
+
+
+@app.route("/students/bulk-import/template")
+@role_required("admin")
+def students_bulk_import_template():
+    """Downloadable starter CSV so admins know the exact column names to use."""
+    csv_content = "reg_number,full_name,email,department\nR2024001,Jane Doe,jane@example.com,Computer Science\n"
+    return app.response_class(
+        csv_content,
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=student_import_template.csv"},
+    )
+
+
 @app.route("/students/add", methods=["GET", "POST"])
 @role_required("admin")
 def student_add():
@@ -881,10 +959,33 @@ def student_dashboard():
            WHERE ar.student_id=? ORDER BY ar.timestamp DESC LIMIT 20""",
         (student_id,),
     ).fetchall()
+
+    # Attendance streak: consecutive sessions (across all courses, in
+    # chronological order) most recently attended without a gap/absence.
+    # Purely a display touch — no new table needed, computed from records
+    # that already exist.
+    all_sessions_ordered = db.execute(
+        """SELECT s.id AS session_id,
+                  MAX(CASE WHEN ar.student_id = ? AND ar.status IN ('present','late') THEN 1 ELSE 0 END) AS attended
+           FROM sessions s
+           JOIN enrollments e ON e.course_id = s.course_id AND e.student_id = ? AND e.status='enrolled'
+           LEFT JOIN attendance_records ar ON ar.session_id = s.id AND ar.student_id = ?
+           WHERE s.session_date <= date('now')
+           GROUP BY s.id
+           ORDER BY s.session_date DESC, s.start_time DESC""",
+        (student_id, student_id, student_id),
+    ).fetchall()
+    streak = 0
+    for row in all_sessions_ordered:
+        if row["attended"]:
+            streak += 1
+        else:
+            break
+
     db.close()
     return render_template(
         "student_dashboard.html", student=student, course_stats=course_stats,
-        overall_pct=overall_pct, history=history,
+        overall_pct=overall_pct, history=history, streak=streak,
         low_attendance_threshold=low_attendance_threshold,
     )
 
@@ -983,6 +1084,56 @@ def course_sessions(course_id):
     ).fetchall()
     db.close()
     return render_template("sessions.html", course=course, sessions=sessions_rows)
+
+
+@app.route("/courses/<int:course_id>/summary")
+@role_required("admin", "lecturer")
+def course_attendance_summary(course_id):
+    """
+    Printable, per-course attendance summary — one row per session showing
+    who attended and the running percentage. Lecturers can only view their
+    own courses; kept behind login (unlike a public link) since attendance
+    data is student-identifiable and shouldn't be reachable by a guessed URL.
+    """
+    db = get_db()
+    course = db.execute(
+        "SELECT c.*, u.full_name AS lecturer_name FROM courses c LEFT JOIN users u ON u.id=c.lecturer_id WHERE c.id=?",
+        (course_id,),
+    ).fetchone()
+    if not course:
+        abort(404)
+    if session.get("role") == "lecturer" and course["lecturer_id"] != session["user_id"]:
+        abort(403)
+
+    sessions_rows = db.execute(
+        """SELECT s.id, s.session_date, s.start_time,
+                  COUNT(DISTINCT e.student_id) AS enrolled,
+                  COUNT(DISTINCT CASE WHEN ar.status IN ('present','late') THEN ar.student_id END) AS attended
+           FROM sessions s
+           LEFT JOIN enrollments e ON e.course_id = s.course_id AND e.status='enrolled'
+           LEFT JOIN attendance_records ar ON ar.session_id = s.id
+           WHERE s.course_id = ?
+           GROUP BY s.id ORDER BY s.session_date, s.start_time""",
+        (course_id,),
+    ).fetchall()
+
+    per_student = db.execute(
+        """SELECT st.id, st.full_name, st.reg_number,
+                  COUNT(DISTINCT s.id) AS total_sessions,
+                  COUNT(DISTINCT CASE WHEN ar.status IN ('present','late') THEN ar.session_id END) AS attended,
+                  ROUND(100.0 * COUNT(DISTINCT CASE WHEN ar.status IN ('present','late') THEN ar.session_id END)
+                        / NULLIF(COUNT(DISTINCT s.id), 0), 1) AS pct
+           FROM students st
+           JOIN enrollments e ON e.student_id = st.id AND e.course_id = ? AND e.status='enrolled'
+           LEFT JOIN sessions s ON s.course_id = ?
+           LEFT JOIN attendance_records ar ON ar.student_id = st.id AND ar.session_id = s.id
+           GROUP BY st.id ORDER BY st.full_name""",
+        (course_id, course_id),
+    ).fetchall()
+    db.close()
+    return render_template(
+        "course_summary.html", course=course, sessions=sessions_rows, per_student=per_student
+    )
 
 
 # ----------------------------------------------------------------------
