@@ -1,32 +1,34 @@
 {% extends "base.html" %}
-{% block title %}Register Student{% endblock %}
+{% block title %}Register a student{% endblock %}
 {% block content %}
-<span class="eyebrow">Records · New</span>
+<p class="section-label">RECORDS · NEW</p>
 <h1>Register a student</h1>
 <p>A unique Code128 barcode is generated automatically from the registration number — rendered on-screen and printable, no barcode-card printer needed.</p>
-<div class="barcode-rule"></div>
 
-<div class="card" style="max-width:520px;">
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    {% for category, message in messages %}
+      <div class="flash {{ category }}">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+{% endwith %}
+
+<div class="card" style="max-width:600px;">
   <form method="post">
-    <label for="reg_number">Registration number</label>
-    <input type="text" id="reg_number" name="reg_number" required placeholder="e.g. T2324193S">
-
-    <label for="full_name">Full name</label>
-    <input type="text" id="full_name" name="full_name" required>
-
-    <div class="field-row">
-      <div>
-        <label for="email">Email</label>
-        <input type="email" id="email" name="email">
-      </div>
-      <div>
-        <label for="department">Department</label>
-        <input type="text" id="department" name="department">
-      </div>
-    </div>
-
-    <button class="btn accent" type="submit" style="margin-top:18px;">Create student &amp; generate barcode</button>
-    <a href="{{ url_for('students_list') }}" class="btn ghost" style="margin-top:18px;">Cancel</a>
+    <label>Full name
+      <input type="text" name="full_name" required autofocus>
+    </label>
+    <br><br>
+    <label>Email <span style="font-weight:normal;color:#888;">(optional)</span>
+      <input type="email" name="email">
+    </label>
+    <br><br>
+    <label>Department <span style="font-weight:normal;color:#888;">(optional)</span>
+      <input type="text" name="department">
+    </label>
+    <br><br>
+    <button type="submit" class="btn">Create student &amp; generate barcode</button>
+    <a href="{{ url_for('students_list') }}" class="btn" style="background:#fff;color:#1F2937;border:1px solid #ccc;">Cancel</a>
   </form>
 </div>
 {% endblock %}
