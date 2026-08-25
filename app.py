@@ -183,6 +183,52 @@ def request_password_reset():
     return redirect(url_for("password_reset_request", role=request.args.get("role", "")))
 
 
+@app.route("/check-reset-status")
+def check_reset_status():
+    """Lets a lecturer/student check whether their submitted reset request
+    has been actioned yet, without needing to log in (they can't log in —
+    that's the whole problem). Looks up by username/reg number they enter."""
+    username = request.args.get("username", "").strip()
+    role_hint = request.args.get("role", "")
+    status_row = None
+    if username:
+        db = get_db()
+        _ensure_reset_requests_table(db)
+        status_row = db.execute(
+            """SELECT * FROM password_reset_requests
+               WHERE requester_username = ? ORDER BY created_at DESC LIMIT 1""",
+            (username,),
+        ).fetchone()
+        db.close()
+    return render_template_string(
+        """{% extends "base.html" %}
+{% block content_bare %}
+<div style="max-width:480px;margin:60px auto;">
+  <h2>Check reset request status</h2>
+  <form method="get">
+    <input type="hidden" name="role" value="{{ role_hint }}">
+    <label>Username / Registration number
+      <input type="text" name="username" value="{{ username }}" required>
+    </label><br><br>
+    <button type="submit" class="btn">Check status</button>
+  </form>
+  {% if username and status_row %}
+    <p style="margin-top:20px;">
+      Latest request for <strong>{{ username }}</strong>: status is
+      <strong>{{ status_row.status }}</strong>
+      {% if status_row.status == 'resolved' %}— you can log in with your reset password now.{% endif %}
+    </p>
+  {% elif username %}
+    <p style="margin-top:20px;">No reset request found for that username yet.
+       <a href="{{ url_for('password_reset_request', role=role_hint) }}">Submit one</a>.</p>
+  {% endif %}
+  <p><a href="{{ url_for('login') }}">Back to login</a></p>
+</div>
+{% endblock %}""",
+        username=username, role_hint=role_hint, status_row=status_row,
+    )
+
+
 @app.route("/password-reset-requests", methods=["GET"])
 @role_required("admin")
 def password_reset_requests_view():
