@@ -135,6 +135,7 @@ def password_reset_request():
         flash("Your request has been sent to an admin. You'll be contacted once your password is reset.", "success")
         return redirect(url_for("login"))
 
+    prefill_role = request.args.get("role", "")
     return render_template_string(
         """{% extends "base.html" %}
 {% block content_bare %}
@@ -150,8 +151,8 @@ def password_reset_request():
     <label>I am a
       <select name="requester_role" required>
         <option value="">-- select --</option>
-        <option value="lecturer">Lecturer</option>
-        <option value="student">Student</option>
+        <option value="lecturer" {{ 'selected' if prefill_role == 'lecturer' }}>Lecturer</option>
+        <option value="student" {{ 'selected' if prefill_role == 'student' }}>Student</option>
       </select>
     </label><br><br>
     <label>Username / Registration number
@@ -170,8 +171,16 @@ def password_reset_request():
     <a href="{{ url_for('login') }}">Back to login</a>
   </form>
 </div>
-{% endblock %}"""
+{% endblock %}""",
+        prefill_role=prefill_role,
     )
+
+
+@app.route("/request-password-reset")
+def request_password_reset():
+    """Alias endpoint matching the name login.html actually links to.
+    Just forwards to the real handler, keeping any ?role= hint."""
+    return redirect(url_for("password_reset_request", role=request.args.get("role", "")))
 
 
 @app.route("/password-reset-requests", methods=["GET"])
