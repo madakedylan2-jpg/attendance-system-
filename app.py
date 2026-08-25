@@ -79,15 +79,22 @@ def inject_user():
 # Self-healing table creation: CREATE TABLE IF NOT EXISTS means this does
 # NOT touch any existing data, so it's safe to run against a live DB.
 # ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# Password reset requests — in-app queue so lecturers/students who are
+# locked out can flag it without needing an admin's phone number, and so
+# admins have a single place (with a nav badge) to see who's waiting.
+# Self-healing table creation: CREATE TABLE IF NOT EXISTS means this does
+# NOT touch any existing data, so it's safe to run against a live DB.
+# ----------------------------------------------------------------------
 def _ensure_reset_requests_table(db):
     db.execute(
         """CREATE TABLE IF NOT EXISTS password_reset_requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            requester_role TEXT NOT NULL,
-            requester_username TEXT NOT NULL,
-            requester_name TEXT,
-            contact_info TEXT,
-            note TEXT,
+            requester_type TEXT NOT NULL,      -- 'lecturer' or 'student'
+            username TEXT NOT NULL,            -- login username / reg_number entered
+            full_name TEXT,                    -- looked up automatically if a match is found
+            requester_id INTEGER,              -- FK into students.id or users.id, if matched
+            message TEXT,
             status TEXT NOT NULL DEFAULT 'pending',
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             resolved_at TEXT,
@@ -109,124 +116,75 @@ def inject_pending_reset_count():
     return {"pending_reset_count": count}
 
 
-@app.route("/password-reset/request", methods=["GET", "POST"])
-def password_reset_request():
+@app.route("/request-password-reset", methods=["GET", "POST"])
+def request_password_reset():
+    """Public (no login needed) — a lecturer or student who's locked out
+    submits a request here. Does NOT reset anything by itself; it queues
+    a request for an admin to action from /password-reset-requests."""
+    role_hint = request.values.get("role_hint") or request.values.get("role", "")
     if request.method == "POST":
-        requester_role = request.form.get("requester_role", "").strip()
-        requester_username = request.form.get("requester_username", "").strip()
-        requester_name = request.form.get("requester_name", "").strip()
-        contact_info = request.form.get("contact_info", "").strip()
-        note = request.form.get("note", "").strip()
+        role_hint = request.form.get("role_hint", "").strip()
+        username = request.form.get("username", "").strip()
+        message = request.form.get("message", "").strip()
 
-        if requester_role not in ("lecturer", "student") or not requester_username:
+        if role_hint not in ("lecturer", "student") or not username:
             flash("Please select your role and enter your username / registration number.", "error")
-            return redirect(url_for("password_reset_request"))
+            return redirect(url_for("request_password_reset", role=role_hint))
 
         db = get_db()
         _ensure_reset_requests_table(db)
+
+        full_name, requester_id = None, None
+        if role_hint == "student":
+            match = db.execute(
+                "SELECT id, full_name FROM students WHERE reg_number=?", (username,)
+            ).fetchone()
+        else:
+            match = db.execute(
+                "SELECT id, full_name FROM users WHERE username=? AND role='lecturer'", (username,)
+            ).fetchone()
+        if match:
+            full_name, requester_id = match["full_name"], match["id"]
+
         db.execute(
             """INSERT INTO password_reset_requests
-               (requester_role, requester_username, requester_name, contact_info, note)
+               (requester_type, username, full_name, requester_id, message)
                VALUES (?,?,?,?,?)""",
-            (requester_role, requester_username, requester_name, contact_info, note),
+            (role_hint, username, full_name, requester_id, message),
         )
         db.commit()
         db.close()
         flash("Your request has been sent to an admin. You'll be contacted once your password is reset.", "success")
-        return redirect(url_for("login"))
+        return redirect(url_for("login", role=role_hint))
 
-    prefill_role = request.args.get("role", "")
-    return render_template_string(
-        """{% extends "base.html" %}
-{% block content_bare %}
-<div style="max-width:480px;margin:60px auto;">
-  <h2>Request a password reset</h2>
-  <p>Locked out? Submit your details and an admin will reset your password.</p>
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}{% for category, message in messages %}
-      <div class="flash {{ category }}">{{ message }}</div>
-    {% endfor %}{% endif %}
-  {% endwith %}
-  <form method="post">
-    <label>I am a
-      <select name="requester_role" required>
-        <option value="">-- select --</option>
-        <option value="lecturer" {{ 'selected' if prefill_role == 'lecturer' }}>Lecturer</option>
-        <option value="student" {{ 'selected' if prefill_role == 'student' }}>Student</option>
-      </select>
-    </label><br><br>
-    <label>Username / Registration number
-      <input type="text" name="requester_username" required>
-    </label><br><br>
-    <label>Full name
-      <input type="text" name="requester_name">
-    </label><br><br>
-    <label>Contact info (email/phone, optional)
-      <input type="text" name="contact_info">
-    </label><br><br>
-    <label>Note (optional)
-      <textarea name="note"></textarea>
-    </label><br><br>
-    <button type="submit" class="btn">Submit request</button>
-    <a href="{{ url_for('login') }}">Back to login</a>
-  </form>
-</div>
-{% endblock %}""",
-        prefill_role=prefill_role,
-    )
+    return render_template("request_password_reset.html", role_hint=role_hint)
 
 
-@app.route("/request-password-reset")
-def request_password_reset():
-    """Alias endpoint matching the name login.html actually links to.
-    Just forwards to the real handler, keeping any ?role= hint."""
-    return redirect(url_for("password_reset_request", role=request.args.get("role", "")))
-
-
-@app.route("/check-reset-status")
+@app.route("/check-reset-status", methods=["GET", "POST"])
 def check_reset_status():
-    """Lets a lecturer/student check whether their submitted reset request
-    has been actioned yet, without needing to log in (they can't log in —
-    that's the whole problem). Looks up by username/reg number they enter."""
-    username = request.args.get("username", "").strip()
-    role_hint = request.args.get("role", "")
-    status_row = None
-    if username:
+    """Lets a locked-out lecturer/student check whether their submitted
+    reset request has been actioned yet, without needing to log in."""
+    role_hint = request.values.get("role_hint") or request.values.get("role", "")
+    result = None
+    if request.method == "POST":
+        role_hint = request.form.get("role_hint", "").strip()
+        username = request.form.get("username", "").strip()
         db = get_db()
         _ensure_reset_requests_table(db)
-        status_row = db.execute(
+        row = db.execute(
             """SELECT * FROM password_reset_requests
-               WHERE requester_username = ? ORDER BY created_at DESC LIMIT 1""",
-            (username,),
+               WHERE requester_type=? AND username=? ORDER BY created_at DESC LIMIT 1""",
+            (role_hint, username),
         ).fetchone()
         db.close()
-    return render_template_string(
-        """{% extends "base.html" %}
-{% block content_bare %}
-<div style="max-width:480px;margin:60px auto;">
-  <h2>Check reset request status</h2>
-  <form method="get">
-    <input type="hidden" name="role" value="{{ role_hint }}">
-    <label>Username / Registration number
-      <input type="text" name="username" value="{{ username }}" required>
-    </label><br><br>
-    <button type="submit" class="btn">Check status</button>
-  </form>
-  {% if username and status_row %}
-    <p style="margin-top:20px;">
-      Latest request for <strong>{{ username }}</strong>: status is
-      <strong>{{ status_row.status }}</strong>
-      {% if status_row.status == 'resolved' %}— you can log in with your reset password now.{% endif %}
-    </p>
-  {% elif username %}
-    <p style="margin-top:20px;">No reset request found for that username yet.
-       <a href="{{ url_for('password_reset_request', role=role_hint) }}">Submit one</a>.</p>
-  {% endif %}
-  <p><a href="{{ url_for('login') }}">Back to login</a></p>
-</div>
-{% endblock %}""",
-        username=username, role_hint=role_hint, status_row=status_row,
-    )
+        if row:
+            result = {
+                "found": True, "status": row["status"],
+                "created_at": row["created_at"], "resolved_at": row["resolved_at"],
+            }
+        else:
+            result = {"found": False}
+    return render_template("check_reset_status.html", role_hint=role_hint, result=result)
 
 
 @app.route("/password-reset-requests", methods=["GET"])
@@ -234,103 +192,37 @@ def check_reset_status():
 def password_reset_requests_view():
     db = get_db()
     _ensure_reset_requests_table(db)
-    status_filter = request.args.get("status", "pending")
-    if status_filter == "all":
-        rows = db.execute(
-            "SELECT * FROM password_reset_requests ORDER BY created_at DESC LIMIT 200"
-        ).fetchall()
-    else:
-        rows = db.execute(
-            "SELECT * FROM password_reset_requests WHERE status=? ORDER BY created_at DESC LIMIT 200",
-            (status_filter,),
-        ).fetchall()
+    pending = db.execute(
+        "SELECT * FROM password_reset_requests WHERE status='pending' ORDER BY created_at DESC"
+    ).fetchall()
+    resolved = db.execute(
+        "SELECT * FROM password_reset_requests WHERE status='resolved' ORDER BY resolved_at DESC LIMIT 50"
+    ).fetchall()
     db.close()
-    return render_template_string(
-        """{% extends "base.html" %}
-{% block content %}
-<h2>Password reset requests</h2>
-<p>
-  <a href="{{ url_for('password_reset_requests_view', status='pending') }}">Pending</a> |
-  <a href="{{ url_for('password_reset_requests_view', status='resolved') }}">Resolved</a> |
-  <a href="{{ url_for('password_reset_requests_view', status='all') }}">All</a>
-</p>
-<table>
-<tr><th>When</th><th>Role</th><th>Username</th><th>Name</th><th>Contact</th><th>Note</th><th>Status</th><th></th></tr>
-{% for r in rows %}
-<tr>
-  <td>{{ r.created_at }}</td>
-  <td>{{ r.requester_role }}</td>
-  <td>{{ r.requester_username }}</td>
-  <td>{{ r.requester_name }}</td>
-  <td>{{ r.contact_info }}</td>
-  <td>{{ r.note }}</td>
-  <td>{{ r.status }}</td>
-  <td>
-    {% if r.status == 'pending' %}
-    <form method="post" action="{{ url_for('password_reset_resolve', request_id=r.id) }}" style="display:inline">
-      <button type="submit" class="btn">Reset &amp; resolve</button>
-    </form>
-    {% endif %}
-  </td>
-</tr>
-{% endfor %}
-</table>
-{% endblock %}""",
-        rows=rows,
-    )
+    return render_template("password_reset_requests.html", pending=pending, resolved=resolved)
 
 
 @app.route("/password-reset-requests/<int:request_id>/resolve", methods=["POST"])
 @role_required("admin")
-def password_reset_resolve(request_id):
+def password_reset_request_resolve(request_id):
+    """Marks a request resolved. The actual password reset is done via the
+    'Go reset' link to that student's/lecturer's own detail page (which
+    already has a Reset Password button) — this just closes the ticket
+    and logs who closed it, so two admins don't duplicate the work."""
     db = get_db()
     _ensure_reset_requests_table(db)
     req = db.execute("SELECT * FROM password_reset_requests WHERE id=?", (request_id,)).fetchone()
     if not req:
         db.close()
         abort(404)
-
-    if req["requester_role"] == "student":
-        student = db.execute(
-            "SELECT id, reg_number, full_name FROM students WHERE reg_number=?",
-            (req["requester_username"],),
-        ).fetchone()
-        if student:
-            db.execute(
-                "UPDATE students SET password_hash=? WHERE id=?",
-                (generate_password_hash(student["reg_number"]), student["id"]),
-            )
-            flash(
-                f"{student['full_name']}'s password reset to their registration number "
-                f"({student['reg_number']}).", "success",
-            )
-        else:
-            flash(f"No student found with registration number '{req['requester_username']}'.", "error")
-    else:
-        user = db.execute(
-            "SELECT id, username, full_name FROM users WHERE username=? AND role='lecturer'",
-            (req["requester_username"],),
-        ).fetchone()
-        if user:
-            temp_password = secrets.token_urlsafe(6)
-            db.execute(
-                "UPDATE users SET password_hash=? WHERE id=?",
-                (generate_password_hash(temp_password), user["id"]),
-            )
-            flash(
-                f"Temporary password for {user['full_name']} ({user['username']}): "
-                f"{temp_password} — share this with them securely.", "success",
-            )
-        else:
-            flash(f"No lecturer found with username '{req['requester_username']}'.", "error")
-
     db.execute(
         "UPDATE password_reset_requests SET status='resolved', resolved_at=datetime('now'), resolved_by=? WHERE id=?",
         (session.get("full_name"), request_id),
     )
     db.commit()
     db.close()
-    log_action("password_reset", f"resolved request id={request_id} for {req['requester_role']}={req['requester_username']}")
+    log_action("password_reset", f"resolved request id={request_id} for {req['requester_type']}={req['username']}")
+    flash("Request marked resolved.", "success")
     return redirect(url_for("password_reset_requests_view"))
 
 
@@ -888,30 +780,23 @@ def students_bulk_import():
                   + (" ..." if len(skipped) > 10 else ""), "error")
         return redirect(url_for("students_list"))
 
-    return render_template_string(
-        """{% extends "base.html" %}
-{% block content %}
-<h2>Bulk import students (CSV)</h2>
-<p>Upload a CSV with a <code>full_name</code> column (one name per row).
-   <code>email</code> and <code>department</code> columns are optional.
-   Registration number, barcode, and default password are auto-generated for every row —
-   just like adding one student at a time.</p>
-<p>Example:</p>
-<pre>full_name,email,department
-Tariro Ncube,tariro@example.com,Computer Science
-Blessing Moyo,,Computer Science
-</pre>
-{% with messages = get_flashed_messages(with_categories=true) %}
-  {% if messages %}{% for category, message in messages %}
-    <div class="flash {{ category }}">{{ message }}</div>
-  {% endfor %}{% endif %}
-{% endwith %}
-<form method="post" enctype="multipart/form-data">
-  <input type="file" name="csv_file" accept=".csv" required>
-  <button type="submit" class="btn">Import</button>
-  <a href="{{ url_for('students_list') }}">Cancel</a>
-</form>
-{% endblock %}"""
+    return render_template("students_bulk_import.html")
+
+
+@app.route("/students/bulk-import/template")
+@role_required("admin")
+def students_bulk_import_template():
+    """Downloads a starter CSV so admins don't have to guess the column
+    headers. Registration numbers are auto-generated on import regardless
+    of anything in the file — full_name is the only column that matters."""
+    import io as _io
+    content = "full_name,email,department\nTariro Ncube,tariro@example.com,Computer Science\nBlessing Moyo,,Computer Science\n"
+    mem = _io.BytesIO(content.encode("utf-8"))
+    mem.seek(0)
+    return send_file(
+        mem, as_attachment=True,
+        download_name="students_import_template.csv",
+        mimetype="text/csv",
     )
 
 
@@ -1219,6 +1104,74 @@ def course_sessions(course_id):
     ).fetchall()
     db.close()
     return render_template("sessions.html", course=course, sessions=sessions_rows)
+
+
+@app.route("/courses/<int:course_id>/summary")
+@role_required("admin", "lecturer")
+def course_attendance_summary(course_id):
+    """Printable per-course attendance summary: sessions held (with
+    enrolled vs. attended counts) and per-student totals across the
+    whole course. Linked from the 'Printable attendance summary' button
+    on the course sessions page."""
+    db = get_db()
+    course = db.execute(
+        """SELECT c.*, u.full_name AS lecturer_name FROM courses c
+           LEFT JOIN users u ON u.id = c.lecturer_id WHERE c.id=?""",
+        (course_id,),
+    ).fetchone()
+    if not course:
+        db.close()
+        abort(404)
+    if session.get("role") == "lecturer" and course["lecturer_id"] != session["user_id"]:
+        db.close()
+        abort(403)
+
+    enrolled_count = db.execute(
+        "SELECT COUNT(*) c FROM enrollments WHERE course_id=? AND status='enrolled'",
+        (course_id,),
+    ).fetchone()["c"]
+
+    sessions_rows = db.execute(
+        """SELECT s.id, s.session_date, s.start_time,
+                  COUNT(DISTINCT CASE WHEN ar.status IN ('present','late') THEN ar.student_id END) AS attended
+           FROM sessions s
+           LEFT JOIN attendance_records ar ON ar.session_id = s.id
+           WHERE s.course_id=?
+           GROUP BY s.id
+           ORDER BY s.session_date DESC, s.start_time DESC""",
+        (course_id,),
+    ).fetchall()
+    sessions_out = [
+        {"session_date": s["session_date"], "start_time": s["start_time"],
+         "enrolled": enrolled_count, "attended": s["attended"]}
+        for s in sessions_rows
+    ]
+
+    per_student_rows = db.execute(
+        """SELECT st.reg_number, st.full_name,
+                  COUNT(DISTINCT s.id) AS total_sessions,
+                  COUNT(DISTINCT CASE WHEN ar.status IN ('present','late') THEN ar.session_id END) AS attended
+           FROM enrollments e
+           JOIN students st ON st.id = e.student_id
+           LEFT JOIN sessions s ON s.course_id = e.course_id
+           LEFT JOIN attendance_records ar ON ar.session_id = s.id AND ar.student_id = st.id
+           WHERE e.course_id = ? AND e.status='enrolled'
+           GROUP BY st.id
+           ORDER BY st.full_name""",
+        (course_id,),
+    ).fetchall()
+    per_student = []
+    for st in per_student_rows:
+        pct = round(100 * st["attended"] / st["total_sessions"]) if st["total_sessions"] else None
+        per_student.append({
+            "reg_number": st["reg_number"], "full_name": st["full_name"],
+            "total_sessions": st["total_sessions"], "attended": st["attended"], "pct": pct,
+        })
+
+    db.close()
+    return render_template(
+        "course_summary.html", course=course, sessions=sessions_out, per_student=per_student
+    )
 
 
 @app.route("/attendance/take/<int:session_id>", methods=["GET"])
@@ -1649,6 +1602,22 @@ def backup_download():
         download_name=f"attendance_backup_{timestamp}.db",
         mimetype="application/octet-stream",
     )
+
+
+@app.errorhandler(403)
+def forbidden_error(e):
+    return render_template(
+        "error.html", code=403, title="Access denied",
+        message="You don't have permission to view this page with your current role."
+    ), 403
+
+
+@app.errorhandler(404)
+def not_found_error(e):
+    return render_template(
+        "error.html", code=404, title="Page not found",
+        message="That page doesn't exist, or may have been moved."
+    ), 404
 
 
 @app.cli.command("init-db")
