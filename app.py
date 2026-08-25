@@ -760,6 +760,106 @@ def student_add():
     return render_template("student_add.html")
 
 
+@app.route("/students/bulk-import", methods=["GET", "POST"])
+@role_required("admin")
+def students_bulk_import():
+    """CSV bulk import: admin uploads a file with a 'full_name' column
+    (optional 'email', 'department' columns too). Each row gets the same
+    auto-generated reg_number + barcode + default password as the single
+    Add Student form — the admin never types a reg number, here either."""
+    if request.method == "POST":
+        if "csv_file" not in request.files or request.files["csv_file"].filename == "":
+            flash("Please choose a CSV file to upload.", "error")
+            return redirect(url_for("students_bulk_import"))
+
+        import csv
+        import io as _io
+
+        file = request.files["csv_file"]
+        try:
+            raw = file.read().decode("utf-8-sig")
+        except UnicodeDecodeError:
+            flash("Couldn't read that file — please upload a plain CSV (UTF-8).", "error")
+            return redirect(url_for("students_bulk_import"))
+
+        reader = csv.DictReader(_io.StringIO(raw))
+        if not reader.fieldnames or not any(
+            (f or "").strip().lower() == "full_name" for f in reader.fieldnames
+        ):
+            flash("CSV must have a 'full_name' column header (email/department are optional).", "error")
+            return redirect(url_for("students_bulk_import"))
+
+        # Normalise header lookup (case-insensitive)
+        field_map = {(f or "").strip().lower(): f for f in reader.fieldnames}
+
+        db = get_db()
+        created, skipped = [], []
+        for row in reader:
+            full_name = (row.get(field_map.get("full_name", "full_name")) or "").strip()
+            email = (row.get(field_map.get("email", "email")) or "").strip() if "email" in field_map else ""
+            department = (row.get(field_map.get("department", "department")) or "").strip() if "department" in field_map else ""
+
+            if not full_name:
+                skipped.append("(blank row)")
+                continue
+
+            inserted = False
+            for _attempt in range(3):
+                reg_number = _generate_reg_number()
+                barcode_value = _generate_barcode_value(reg_number)
+                default_password_hash = generate_password_hash(reg_number.strip())
+                try:
+                    db.execute(
+                        """INSERT INTO students (reg_number, full_name, email, department, barcode_value, password_hash)
+                           VALUES (?,?,?,?,?,?)""",
+                        (reg_number, full_name, email, department, barcode_value, default_password_hash),
+                    )
+                    db.commit()
+                    created.append(f"{full_name} -> {reg_number}")
+                    inserted = True
+                    break
+                except Exception:
+                    continue
+            if not inserted:
+                skipped.append(full_name)
+
+        db.close()
+        log_action("students_bulk_import", f"created={len(created)} skipped={len(skipped)}")
+
+        if created:
+            flash(f"Imported {len(created)} student(s) successfully.", "success")
+        if skipped:
+            flash(f"Skipped {len(skipped)} row(s): {', '.join(skipped[:10])}"
+                  + (" ..." if len(skipped) > 10 else ""), "error")
+        return redirect(url_for("students_list"))
+
+    return render_template_string(
+        """{% extends "base.html" %}
+{% block content %}
+<h2>Bulk import students (CSV)</h2>
+<p>Upload a CSV with a <code>full_name</code> column (one name per row).
+   <code>email</code> and <code>department</code> columns are optional.
+   Registration number, barcode, and default password are auto-generated for every row —
+   just like adding one student at a time.</p>
+<p>Example:</p>
+<pre>full_name,email,department
+Tariro Ncube,tariro@example.com,Computer Science
+Blessing Moyo,,Computer Science
+</pre>
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}{% for category, message in messages %}
+    <div class="flash {{ category }}">{{ message }}</div>
+  {% endfor %}{% endif %}
+{% endwith %}
+<form method="post" enctype="multipart/form-data">
+  <input type="file" name="csv_file" accept=".csv" required>
+  <button type="submit" class="btn">Import</button>
+  <a href="{{ url_for('students_list') }}">Cancel</a>
+</form>
+{% endblock %}"""
+    )
+
+
 @app.route("/students/<int:student_id>")
 @role_required("admin")
 def student_detail(student_id):
