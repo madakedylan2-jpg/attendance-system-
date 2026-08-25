@@ -860,6 +860,86 @@ Blessing Moyo,,Computer Science
     )
 
 
+@app.route("/students/export")
+@role_required("admin")
+def students_export():
+    """Download all students as a CSV — the read-only counterpart to
+    bulk import. No schema changes, no risk to existing data."""
+    import csv
+    import io as _io
+
+    db = get_db()
+    rows = db.execute(
+        "SELECT reg_number, full_name, email, department, barcode_value, status FROM students ORDER BY full_name"
+    ).fetchall()
+    db.close()
+
+    buf = _io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["reg_number", "full_name", "email", "department", "barcode_value", "status"])
+    for r in rows:
+        writer.writerow([r["reg_number"], r["full_name"], r["email"], r["department"], r["barcode_value"], r["status"]])
+
+    mem = _io.BytesIO(buf.getvalue().encode("utf-8"))
+    mem.seek(0)
+    log_action("students_export", f"count={len(rows)}")
+    return send_file(
+        mem, as_attachment=True,
+        download_name="students_export.csv",
+        mimetype="text/csv",
+    )
+
+
+@app.route("/attendance/export")
+@role_required("admin", "lecturer")
+def attendance_export():
+    """Download attendance records as a CSV. Lecturers only get their own
+    courses' records; admins get everything — same scoping as Reports."""
+    import csv
+    import io as _io
+
+    db = get_db()
+    if session.get("role") == "lecturer":
+        rows = db.execute(
+            """SELECT st.reg_number, st.full_name, c.code AS course_code, c.name AS course_name,
+                      s.session_date, ar.status, ar.method, ar.timestamp
+               FROM attendance_records ar
+               JOIN students st ON st.id = ar.student_id
+               JOIN sessions s ON s.id = ar.session_id
+               JOIN courses c ON c.id = s.course_id
+               WHERE c.lecturer_id = ?
+               ORDER BY ar.timestamp DESC""",
+            (session["user_id"],),
+        ).fetchall()
+    else:
+        rows = db.execute(
+            """SELECT st.reg_number, st.full_name, c.code AS course_code, c.name AS course_name,
+                      s.session_date, ar.status, ar.method, ar.timestamp
+               FROM attendance_records ar
+               JOIN students st ON st.id = ar.student_id
+               JOIN sessions s ON s.id = ar.session_id
+               JOIN courses c ON c.id = s.course_id
+               ORDER BY ar.timestamp DESC"""
+        ).fetchall()
+    db.close()
+
+    buf = _io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["reg_number", "full_name", "course_code", "course_name", "session_date", "status", "method", "timestamp"])
+    for r in rows:
+        writer.writerow([r["reg_number"], r["full_name"], r["course_code"], r["course_name"],
+                          r["session_date"], r["status"], r["method"], r["timestamp"]])
+
+    mem = _io.BytesIO(buf.getvalue().encode("utf-8"))
+    mem.seek(0)
+    log_action("attendance_export", f"count={len(rows)}")
+    return send_file(
+        mem, as_attachment=True,
+        download_name="attendance_export.csv",
+        mimetype="text/csv",
+    )
+
+
 @app.route("/students/<int:student_id>")
 @role_required("admin")
 def student_detail(student_id):
@@ -1242,18 +1322,28 @@ def attendance_manual_adjust(record_id):
 @app.route("/attendance/all")
 @role_required("admin")
 def attendance_all():
+    lecturer_id = request.args.get("lecturer_id") or None
     db = get_db()
-    rows = db.execute(
-        """SELECT ar.timestamp, ar.status, ar.method, st.full_name, st.reg_number,
-                  c.name AS course_name, s.session_date
-           FROM attendance_records ar
-           JOIN students st ON st.id = ar.student_id
-           JOIN sessions s ON s.id = ar.session_id
-           JOIN courses c ON c.id = s.course_id
-           ORDER BY ar.timestamp DESC LIMIT 200"""
+    lecturers = db.execute(
+        "SELECT id, full_name FROM users WHERE role='lecturer' ORDER BY full_name"
     ).fetchall()
+    query = """SELECT ar.timestamp, ar.status, ar.method, st.full_name, st.reg_number,
+                      c.name AS course_name, c.code AS course_code, s.session_date,
+                      u.full_name AS lecturer_name
+               FROM attendance_records ar
+               JOIN students st ON st.id = ar.student_id
+               JOIN sessions s ON s.id = ar.session_id
+               JOIN courses c ON c.id = s.course_id
+               LEFT JOIN users u ON u.id = c.lecturer_id
+               WHERE 1=1"""
+    params = []
+    if lecturer_id:
+        query += " AND c.lecturer_id = ?"
+        params.append(lecturer_id)
+    query += " ORDER BY ar.timestamp DESC LIMIT 200"
+    rows = db.execute(query, params).fetchall()
     db.close()
-    return render_template("attendance_list.html", rows=rows)
+    return render_template("attendance_list.html", rows=rows, lecturers=lecturers, lecturer_id=lecturer_id)
 
 
 @app.route("/reports", methods=["GET"])
