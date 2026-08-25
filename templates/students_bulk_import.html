@@ -3,7 +3,7 @@
 {% block content %}
 <span class="eyebrow">Records · New</span>
 <h1>Bulk import students</h1>
-<p>Upload a CSV with columns <code>reg_number</code>, <code>full_name</code>, and optionally <code>email</code> and <code>department</code>. Each row is registered the same way as the single "Register student" form — a barcode is generated automatically, and the portal password defaults to the student's own registration number.</p>
+<p>Upload a CSV with a <code>full_name</code> column (one name per row). <code>email</code> and <code>department</code> columns are optional. A registration number, barcode, and default password are generated automatically for every row — just like the single "Register student" form, you never type a registration number.</p>
 <div class="barcode-rule"></div>
 
 <div class="card" style="max-width:560px;">
