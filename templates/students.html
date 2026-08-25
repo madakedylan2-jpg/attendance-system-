@@ -8,14 +8,13 @@
     <a href="{{ url_for('students_id_cards', q=q) }}" class="btn ghost">🖨 Print ID cards (PDF)</a>
     <a href="{{ url_for('student_add') }}" class="btn accent">+ Register student</a>
     <a href="{{ url_for('students_bulk_import') }}" class="btn">⇪ Bulk import (CSV)</a>
+    <a href="{{ url_for('students_export') }}" class="btn ghost">⤓ Export CSV</a>
   </div>
 </div>
 <div class="barcode-rule"></div>
-
 <form method="get" style="max-width:360px; margin-bottom:16px;">
   <input type="text" name="q" placeholder="Search by name, reg number, department…" value="{{ q }}">
 </form>
-
 <div class="table-wrap">
 <table>
   <thead>

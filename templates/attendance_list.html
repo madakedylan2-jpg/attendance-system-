@@ -4,17 +4,18 @@
 <span class="eyebrow">Records</span>
 <h1>All attendance (latest 200)</h1>
 <div class="barcode-rule"></div>
-
-<form method="get" style="max-width:340px; margin-bottom:16px;">
-  <label for="lecturer_id">Filter by lecturer</label>
-  <select name="lecturer_id" id="lecturer_id" onchange="this.form.submit()">
-    <option value="">All lecturers</option>
-    {% for l in lecturers %}
-      <option value="{{ l.id }}" {{ 'selected' if lecturer_id|string == l.id|string }}>{{ l.full_name }}</option>
-    {% endfor %}
-  </select>
-</form>
-
+<div style="display:flex; align-items:flex-end; gap:16px; margin-bottom:16px;">
+  <form method="get" style="max-width:340px;">
+    <label for="lecturer_id">Filter by lecturer</label>
+    <select name="lecturer_id" id="lecturer_id" onchange="this.form.submit()">
+      <option value="">All lecturers</option>
+      {% for l in lecturers %}
+        <option value="{{ l.id }}" {{ 'selected' if lecturer_id|string == l.id|string }}>{{ l.full_name }}</option>
+      {% endfor %}
+    </select>
+  </form>
+  <a href="{{ url_for('attendance_export') }}" class="btn">⤓ Export CSV</a>
+</div>
 <div class="table-wrap">
 <table>
   <thead><tr><th>Timestamp</th><th>Student</th><th>Course</th><th>Lecturer</th><th>Date</th><th>Status</th><th>Method</th></tr></thead>
