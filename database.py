@@ -71,6 +71,19 @@ def ensure_messaging_tables(conn):
     )
     conn.commit()
 
+    # --- Safety-net column migration -----------------------------------
+    # CREATE TABLE IF NOT EXISTS is a no-op on a `messages` table that was
+    # already created by an OLDER version of this schema (before
+    # target_desc existed). That leaves the table missing this column
+    # even though the code above expects it, which crashes every send
+    # with "table messages has no column named target_desc". This adds
+    # the column to an existing table if it's missing, without touching
+    # or deleting a single row of existing message data.
+    existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
+    if "target_desc" not in existing_columns:
+        conn.execute("ALTER TABLE messages ADD COLUMN target_desc TEXT NOT NULL DEFAULT ''")
+        conn.commit()
+
 
 def ensure_reset_requests_table(conn):
     """
