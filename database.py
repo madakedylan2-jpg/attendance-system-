@@ -14,9 +14,19 @@ SCHEMA_PATH = os.path.join(BASE_DIR, "schema.sql")
 
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    # timeout: how long sqlite3 will wait for a lock to clear before
+    # raising "database is locked", instead of failing instantly.
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # WAL lets one writer and many readers work at the same time instead
+    # of blocking each other — this app opens several short-lived
+    # connections per request (one per context processor plus the view
+    # itself), so without WAL, ordinary traffic was enough to collide.
+    conn.execute("PRAGMA journal_mode = WAL")
+    # Also wait (rather than fail immediately) at the SQLite level itself,
+    # as a second safety net alongside the connection-level timeout above.
+    conn.execute("PRAGMA busy_timeout = 10000")
     return conn
 
 
@@ -70,19 +80,6 @@ def ensure_messaging_tables(conn):
         """
     )
     conn.commit()
-
-    # --- Safety-net column migration -----------------------------------
-    # CREATE TABLE IF NOT EXISTS is a no-op on a `messages` table that was
-    # already created by an OLDER version of this schema (before
-    # target_desc existed). That leaves the table missing this column
-    # even though the code above expects it, which crashes every send
-    # with "table messages has no column named target_desc". This adds
-    # the column to an existing table if it's missing, without touching
-    # or deleting a single row of existing message data.
-    existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
-    if "target_desc" not in existing_columns:
-        conn.execute("ALTER TABLE messages ADD COLUMN target_desc TEXT NOT NULL DEFAULT ''")
-        conn.commit()
 
 
 def ensure_reset_requests_table(conn):
