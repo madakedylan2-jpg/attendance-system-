@@ -65,6 +65,37 @@ def _add_missing_columns(conn, table, column_defs):
     conn.commit()
 
 
+def _rebuild_if_broken(conn, table, required_columns, insert_supplies):
+    """
+    Handles messy real-world drift that simple ADD-COLUMN migrations
+    can't: a table that already has a NOT NULL column from some earlier,
+    unrelated version of the schema (e.g. a stray 'recipient_type'
+    column that ended up on 'messages' at some point) — one the current
+    INSERT statements never supply a value for, so every insert fails
+    with a NOT NULL constraint error no matter what columns get added.
+    Internal messages aren't data worth preserving through a schema
+    fight, so if the table's shape doesn't match what the app expects,
+    just drop and let it be recreated fresh right after this returns.
+    """
+    info = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    if not info:
+        return  # table doesn't exist yet — nothing to rebuild, CREATE TABLE will make it
+    existing = {row["name"] for row in info}
+    missing_required = required_columns - existing
+    # A NOT NULL column, with no default, that the app's own INSERTs
+    # never populate — the actual failure mode we hit.
+    unsatisfiable = [
+        row["name"] for row in info
+        if row["notnull"] and row["dflt_value"] is None
+        and row["name"] not in insert_supplies and row["name"] != "id"
+    ]
+    if missing_required or unsatisfiable:
+        if table == "messages":
+            conn.execute("DROP TABLE IF EXISTS message_recipients")
+        conn.execute(f"DROP TABLE IF EXISTS {table}")
+        conn.commit()
+
+
 def ensure_messaging_tables(conn):
     """
     Adds the internal messaging tables if they don't exist yet — a safe,
@@ -72,6 +103,12 @@ def ensure_messaging_tables(conn):
     students/attendance already in it) never has to be reset. Runs every
     startup; CREATE TABLE IF NOT EXISTS makes repeats harmless.
     """
+    _rebuild_if_broken(
+        conn, "messages",
+        required_columns={"id", "sender_role", "sender_id", "sender_name",
+                           "target_desc", "subject", "body", "created_at"},
+        insert_supplies={"sender_role", "sender_id", "sender_name", "target_desc", "subject", "body"},
+    )
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS messages (
@@ -107,6 +144,7 @@ def ensure_messaging_tables(conn):
     _add_missing_columns(conn, "message_recipients", [
         ("read_at", "read_at TEXT"),
     ])
+
 
 
 
