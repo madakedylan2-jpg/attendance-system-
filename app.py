@@ -20,11 +20,39 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from database import (
     get_db, init_db, now_iso, DB_PATH,
     get_setting, get_all_settings, set_setting,
+    ensure_messaging_tables,
 )
 from reports import build_pdf_report, build_excel_report, build_id_cards_pdf
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("ATTENDANCE_SECRET_KEY", "dev-secret-change-me")
+
+# ----------------------------------------------------------------------
+# Database setup — runs at import time, unconditionally.
+#
+# init_db() (which creates the messages/message_recipients tables via
+# ensure_messaging_tables, and the password_reset_requests table) was
+# previously only called inside `if __name__ == "__main__"` at the
+# bottom of this file. That block NEVER runs under a production WSGI
+# server like gunicorn (e.g. `gunicorn app:app`), which imports this
+# module and uses the `app` object directly without executing it as a
+# script — so on a gunicorn-run deployment, those tables were silently
+# never created, causing every "send message" / "view inbox" action to
+# fail. Calling it here, at module level, guarantees it runs exactly
+# once on startup regardless of how the process is launched.
+# ----------------------------------------------------------------------
+_first_time_boot = init_db(reset=False)
+if _first_time_boot:
+    from werkzeug.security import generate_password_hash as _gen_hash
+    _boot_db = get_db()
+    _boot_db.execute(
+        """INSERT INTO users (username, password_hash, full_name, email, role)
+           VALUES (?,?,?,?,?)""",
+        ("admin", _gen_hash("admin123"), "System Administrator", "admin@example.com", "admin"),
+    )
+    _boot_db.commit()
+    _boot_db.close()
+    print("First run: created default admin login -> username: admin / password: admin123")
 
 
 def login_required(view):
@@ -412,6 +440,7 @@ def _unread_message_count():
     else:
         return 0
     db = get_db()
+    ensure_messaging_tables(db)
     n = db.execute(
         "SELECT COUNT(*) c FROM message_recipients WHERE recipient_type=? AND recipient_id=? AND read_at IS NULL",
         (rtype, rid),
@@ -429,6 +458,7 @@ def inject_unread_count():
 @role_required("admin", "lecturer")
 def messages_compose():
     db = get_db()
+    ensure_messaging_tables(db)  # self-healing safety net, see startup-init comment above
     role = session["role"]
     sender_id = session["user_id"]
     sender_name = session["full_name"]
@@ -556,6 +586,7 @@ def messages_compose():
 @role_required("admin", "lecturer")
 def messages_sent():
     db = get_db()
+    ensure_messaging_tables(db)
     rows = db.execute(
         """SELECT m.*, COUNT(mr.id) AS recipient_count,
                   SUM(CASE WHEN mr.read_at IS NOT NULL THEN 1 ELSE 0 END) AS read_count
@@ -572,6 +603,7 @@ def messages_sent():
 @role_required("lecturer", "student")
 def messages_inbox():
     db = get_db()
+    ensure_messaging_tables(db)
     if session["role"] == "lecturer":
         rid, rtype = session["user_id"], "lecturer"
     else:
@@ -596,6 +628,7 @@ def messages_mark_read(recipient_row_id):
     else:
         rid, rtype = session["student_id"], "student"
     db = get_db()
+    ensure_messaging_tables(db)
     row = db.execute(
         "SELECT id FROM message_recipients WHERE id=? AND recipient_type=? AND recipient_id=?",
         (recipient_row_id, rtype, rid),
@@ -1627,15 +1660,7 @@ def init_db_command():
 
 
 if __name__ == "__main__":
-    first_time = init_db(reset=False)
-    if first_time:
-        db = get_db()
-        db.execute(
-            """INSERT INTO users (username, password_hash, full_name, email, role)
-               VALUES (?,?,?,?,?)""",
-            ("admin", generate_password_hash("admin123"), "System Administrator", "admin@example.com", "admin"),
-        )
-        db.commit()
-        db.close()
-        print("First run: created default admin login -> username: admin / password: admin123")
+    # DB init + first-admin seeding already happened above at import time
+    # (runs the same way under `python3 app.py` or under gunicorn) — this
+    # block now only starts the dev server itself.
     app.run(debug=True, host="0.0.0.0", port=5000)
